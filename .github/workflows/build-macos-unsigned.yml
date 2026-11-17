@@ -1,0 +1,135 @@
+# Manual / tag-triggered unsigned macOS test builds for this local-first fork.
+# Does not publish to upstream, does not read Apple or Tauri updater secrets,
+# and does not create official updater artifacts.
+name: Build macOS unsigned (local-first test)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'local-first-test-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-unsigned-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            artifact: macos-aarch64
+            label: Apple Silicon
+          - target: x86_64-apple-darwin
+            artifact: macos-x86_64
+            label: Intel
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Record source provenance
+        run: |
+          echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "ref=${GITHUB_REF}" >> "$GITHUB_OUTPUT"
+          git rev-parse HEAD
+          git log -1 --oneline
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          workspaces: src-tauri -> target
+          key: unsigned-macos-${{ matrix.target }}
+
+      - name: Build unsigned macOS bundles
+        env:
+          CI: true
+        run: |
+          # Never use official signing or updater keys, even if a fork secret exists.
+          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY
+          unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_EXPECTED_SIGNER_SHA256
+          unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          unset CSC_LINK CSC_KEY_PASSWORD
+          npx tauri build --target "${{ matrix.target }}" --bundles dmg,app
+
+      - name: Collect bundles, checksums, and signing status
+        run: |
+          set -euo pipefail
+          out="dist-macos/${{ matrix.artifact }}"
+          mkdir -p "$out"
+          bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
+          if [ ! -d "$bundle" ]; then
+            echo "Bundle directory not found: $bundle"
+            find src-tauri/target -maxdepth 4 -type d -print
+            exit 1
+          fi
+          find "$bundle" -type f -name '*.dmg' -exec cp -v {} "$out/" \;
+          # Keep a copy of the app bundle as a zip for inspection.
+          if [ -d "$bundle/macos" ]; then
+            find "$bundle/macos" -maxdepth 1 -name '*.app' -print
+          fi
+
+          {
+            echo "OpenTypeless local-first unsigned macOS test build"
+            echo "git_sha=${GITHUB_SHA}"
+            echo "git_ref=${GITHUB_REF}"
+            echo "target=${{ matrix.target }}"
+            echo "label=${{ matrix.label }}"
+            echo "signing=unsigned / not notarized"
+            echo "official_updater=disabled"
+            echo
+            echo "This is a test build of the ybbapp/opentypeless local-first fork."
+            echo "It is not Developer ID signed and is not notarized."
+            echo "macOS Gatekeeper may block the first open; use Open from the"
+            echo "context menu or Privacy & Security > Open Anyway for this app only."
+            echo "Do not disable Gatekeeper or System Integrity Protection."
+            echo
+          } > "$out/BUILD_INFO.txt"
+
+          shopt -s nullglob
+          dmgs=("$out"/*.dmg)
+          if [ ${#dmgs[@]} -eq 0 ]; then
+            echo "No DMG files were produced"
+            find "$bundle" -maxdepth 5 -print
+            exit 1
+          fi
+
+          for dmg in "${dmgs[@]}"; do
+            echo "=== $(basename "$dmg") ===" >> "$out/BUILD_INFO.txt"
+            ls -l "$dmg" >> "$out/BUILD_INFO.txt"
+            shasum -a 256 "$dmg" >> "$out/SHA256SUMS.txt"
+            if hdiutil imageinfo "$dmg" >/tmp/dmg-info.txt 2>/dev/null; then
+              echo "dmg_info_ok=yes" >> "$out/BUILD_INFO.txt"
+            fi
+            # If codesign metadata is present it is at most ad-hoc, not Developer ID.
+            if command -v codesign >/dev/null; then
+              echo "codesign_display:" >> "$out/BUILD_INFO.txt"
+              codesign --display --verbose=2 "$dmg" >> "$out/BUILD_INFO.txt" 2>&1 || \
+                echo "codesign: no Developer ID signature (expected for this unsigned test build)" >> "$out/BUILD_INFO.txt"
+            fi
+          done
+
+          echo "Collected:"
+          ls -la "$out"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opentypeless-local-first-${{ matrix.artifact }}-unsigned
+          path: dist-macos/${{ matrix.artifact }}/
+          if-no-files-found: error
+          retention-days: 14

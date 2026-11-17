@@ -87,7 +87,8 @@
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": "./Entitlements.plist",
-      "infoPlist": "./Info.plist"
+      "infoPlist": "./Info.plist",
+      "signingIdentity": "-"
     },
     "linux": {
       "appimage": {

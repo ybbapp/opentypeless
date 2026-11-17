@@ -1,7 +1,9 @@
-# Manual / tag-triggered unsigned macOS test builds for this local-first fork.
-# Does not publish to upstream, does not read Apple or Tauri updater secrets,
-# and does not create official updater artifacts.
-name: Build macOS unsigned (local-first test)
+# Manual / tag-triggered ad-hoc macOS test builds for this local-first fork.
+# Does not publish to upstream, does not read Apple Developer ID or notarization
+# secrets, and does not create official updater artifacts.
+# Ad-hoc signing is required so Apple Silicon does not treat the app as damaged.
+# These builds are not Developer ID signed and are not notarized.
+name: Build macOS ad-hoc (local-first test)
 
 on:
   workflow_dispatch:
@@ -13,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: macos-unsigned-${{ github.workflow }}-${{ github.ref }}
+  group: macos-adhoc-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -25,9 +27,11 @@ jobs:
           - target: aarch64-apple-darwin
             artifact: macos-aarch64
             label: Apple Silicon
+            dmg_arch: aarch64
           - target: x86_64-apple-darwin
             artifact: macos-x86_64
             label: Intel
+            dmg_arch: x64
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
@@ -35,8 +39,6 @@ jobs:
 
       - name: Record source provenance
         run: |
-          echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          echo "ref=${GITHUB_REF}" >> "$GITHUB_OUTPUT"
           git rev-parse HEAD
           git log -1 --oneline
 
@@ -54,82 +56,197 @@ jobs:
       - uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           workspaces: src-tauri -> target
-          key: unsigned-macos-${{ matrix.target }}
+          key: adhoc-macos-${{ matrix.target }}
 
-      - name: Build unsigned macOS bundles
+      - name: Build macOS .app without Developer ID or notarization secrets
         env:
           CI: true
+          # Tauri treats "-" as an explicit ad-hoc identity.
+          APPLE_SIGNING_IDENTITY: "-"
         run: |
-          # Never use official signing or updater keys, even if a fork secret exists.
-          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY
+          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
           unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_EXPECTED_SIGNER_SHA256
           unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
           unset CSC_LINK CSC_KEY_PASSWORD
-          npx tauri build --target "${{ matrix.target }}" --bundles dmg,app
+          npx tauri build --target "${{ matrix.target }}" --bundles app
 
-      - name: Collect bundles, checksums, and signing status
+      - name: Ad-hoc sign, verify, package DMG, and record assessments
         run: |
           set -euo pipefail
-          out="dist-macos/${{ matrix.artifact }}"
+
+          target="${{ matrix.target }}"
+          artifact="${{ matrix.artifact }}"
+          label="${{ matrix.label }}"
+          dmg_arch="${{ matrix.dmg_arch }}"
+          bundle="src-tauri/target/${target}/release/bundle"
+          entitlements="src-tauri/Entitlements.plist"
+          out="dist-macos/${artifact}"
           mkdir -p "$out"
-          bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
+
           if [ ! -d "$bundle" ]; then
             echo "Bundle directory not found: $bundle"
             find src-tauri/target -maxdepth 4 -type d -print
             exit 1
           fi
-          find "$bundle" -type f -name '*.dmg' -exec cp -v {} "$out/" \;
-          # Keep a copy of the app bundle as a zip for inspection.
-          if [ -d "$bundle/macos" ]; then
-            find "$bundle/macos" -maxdepth 1 -name '*.app' -print
+
+          app=""
+          if [ -d "$bundle/macos/OpenTypeless.app" ]; then
+            app="$bundle/macos/OpenTypeless.app"
+          else
+            app="$(find "$bundle/macos" -maxdepth 1 -name '*.app' -type d | head -n 1 || true)"
           fi
-
-          {
-            echo "OpenTypeless local-first unsigned macOS test build"
-            echo "git_sha=${GITHUB_SHA}"
-            echo "git_ref=${GITHUB_REF}"
-            echo "target=${{ matrix.target }}"
-            echo "label=${{ matrix.label }}"
-            echo "signing=unsigned / not notarized"
-            echo "official_updater=disabled"
-            echo
-            echo "This is a test build of the ybbapp/opentypeless local-first fork."
-            echo "It is not Developer ID signed and is not notarized."
-            echo "macOS Gatekeeper may block the first open; use Open from the"
-            echo "context menu or Privacy & Security > Open Anyway for this app only."
-            echo "Do not disable Gatekeeper or System Integrity Protection."
-            echo
-          } > "$out/BUILD_INFO.txt"
-
-          shopt -s nullglob
-          dmgs=("$out"/*.dmg)
-          if [ ${#dmgs[@]} -eq 0 ]; then
-            echo "No DMG files were produced"
+          if [ -z "$app" ] || [ ! -d "$app" ]; then
+            echo "No .app bundle was produced under $bundle/macos"
             find "$bundle" -maxdepth 5 -print
             exit 1
           fi
 
-          for dmg in "${dmgs[@]}"; do
-            echo "=== $(basename "$dmg") ===" >> "$out/BUILD_INFO.txt"
-            ls -l "$dmg" >> "$out/BUILD_INFO.txt"
-            shasum -a 256 "$dmg" >> "$out/SHA256SUMS.txt"
-            if hdiutil imageinfo "$dmg" >/tmp/dmg-info.txt 2>/dev/null; then
-              echo "dmg_info_ok=yes" >> "$out/BUILD_INFO.txt"
-            fi
-            # If codesign metadata is present it is at most ad-hoc, not Developer ID.
-            if command -v codesign >/dev/null; then
-              echo "codesign_display:" >> "$out/BUILD_INFO.txt"
-              codesign --display --verbose=2 "$dmg" >> "$out/BUILD_INFO.txt" 2>&1 || \
-                echo "codesign: no Developer ID signature (expected for this unsigned test build)" >> "$out/BUILD_INFO.txt"
-            fi
-          done
+          if [ ! -f "$entitlements" ]; then
+            echo "Missing entitlements file: $entitlements"
+            exit 1
+          fi
 
+          adhoc_sign() {
+            local path="$1"
+            local use_entitlements="${2:-}"
+            if [ -n "$use_entitlements" ]; then
+              codesign --force --sign - --timestamp=none --entitlements "$entitlements" "$path"
+            else
+              codesign --force --sign - --timestamp=none "$path"
+            fi
+          }
+
+          # Sign nested Mach-O and bundles first (deepest path first), then the app.
+          # Entitlements are applied only to the top-level app / main executables.
+          while IFS= read -r item; do
+            [ -n "$item" ] || continue
+            adhoc_sign "$item"
+          done < <(
+            find "$app/Contents" \( \
+              -name '*.framework' -o -name '*.dylib' -o -name '*.so' -o \
+              -name '*.xpc' -o -name '*.appex' -o -name '*.app' \
+            \) 2>/dev/null | awk '{ print length, $0 }' | sort -nr | while read -r _ path; do
+              printf '%s\n' "$path"
+            done
+          )
+
+          while IFS= read -r item; do
+            [ -n "$item" ] || continue
+            if file -b "$item" | grep -q 'Mach-O'; then
+              adhoc_sign "$item"
+            fi
+          done < <(find "$app/Contents" -type f)
+
+          adhoc_sign "$app" entitlements
+
+          echo "=== codesign --verify --deep --strict ==="
+          codesign --verify --deep --strict --verbose=2 "$app"
+          echo "=== codesign --display ==="
+          codesign --display --verbose=4 --entitlements - "$app"
+
+          # Package a fresh DMG from the signed app so the image cannot contain
+          # a pre-signature copy of the bundle.
+          stage="$(mktemp -d)"
+          ditto "$app" "$stage/OpenTypeless.app"
+          ln -s /Applications "$stage/Applications"
+          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            stamp="${GITHUB_REF_NAME}"
+          else
+            stamp="sha-${GITHUB_SHA:0:12}"
+          fi
+          dmg_name="OpenTypeless-1.1.64-${stamp}-macos-${dmg_arch}-adhoc.dmg"
+          dmg_path="$out/${dmg_name}"
+          hdiutil create \
+            -volname "OpenTypeless" \
+            -srcfolder "$stage" \
+            -ov \
+            -format UDZO \
+            -fs HFS+ \
+            "$dmg_path"
+          rm -rf "$stage"
+
+          echo "=== hdiutil verify ==="
+          hdiutil verify "$dmg_path"
+          echo "=== hdiutil imageinfo (summary) ==="
+          hdiutil imageinfo "$dmg_path" | tee /tmp/dmg-info.txt >/dev/null
+          # Keep a short excerpt rather than the full dump in BUILD_INFO.
+          awk 'NR<=20 { print }' /tmp/dmg-info.txt >/tmp/dmg-info-head.txt
+
+          mount_dir="$(mktemp -d)"
+          attach_output="$(hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "$dmg_path")"
+          echo "$attach_output"
+          mounted_app="$mount_dir/OpenTypeless.app"
+          if [ ! -d "$mounted_app" ]; then
+            echo "Mounted DMG does not contain OpenTypeless.app"
+            ls -la "$mount_dir" || true
+            hdiutil detach "$mount_dir" || true
+            exit 1
+          fi
+
+          echo "=== codesign --verify of app inside DMG ==="
+          codesign --verify --deep --strict --verbose=2 "$mounted_app"
+          codesign --display --verbose=4 --entitlements - "$mounted_app" | tee /tmp/codesign-display.txt
+
+          # spctl is recorded only. Ad-hoc, unnotarized apps are expected to be
+          # rejected; this must not be reported as a Gatekeeper pass.
+          set +e
+          spctl --assess --type execute --verbose=4 "$mounted_app" >/tmp/spctl-execute.txt 2>&1
+          spctl_execute_status=$?
+          spctl --assess --type open --context context:primary-item --verbose=4 "$mounted_app" >/tmp/spctl-open.txt 2>&1
+          spctl_open_status=$?
+          set -e
+          echo "spctl --assess --type execute exit=${spctl_execute_status}"
+          cat /tmp/spctl-execute.txt || true
+          echo "spctl --assess --type open exit=${spctl_open_status}"
+          cat /tmp/spctl-open.txt || true
+
+          hdiutil detach "$mount_dir" || hdiutil detach "$mount_dir" -force
+          rmdir "$mount_dir" || true
+
+          {
+            echo "OpenTypeless local-first macOS test build"
+            echo "git_sha=${GITHUB_SHA}"
+            echo "git_ref=${GITHUB_REF}"
+            echo "target=${target}"
+            echo "label=${label}"
+            echo "signing=ad-hoc / not Developer ID / not notarized"
+            echo "official_updater=disabled"
+            echo
+            echo "This is a test build of the ybbapp/opentypeless local-first fork."
+            echo "It is signed with an ad-hoc signature so Apple Silicon will load"
+            echo "the code object. It is not Developer ID signed and is not notarized."
+            echo "Do not treat this as a Gatekeeper or notarization pass."
+            echo "macOS may still require a one-time Open Anyway / Control-click Open"
+            echo "for this app only. Do not disable Gatekeeper or System Integrity Protection."
+            echo
+            echo "=== $(basename "$dmg_path") ==="
+            ls -l "$dmg_path"
+            echo
+            echo "=== codesign --display (app inside DMG) ==="
+            cat /tmp/codesign-display.txt
+            echo
+            echo "=== codesign --verify --deep --strict ==="
+            echo "result=passed (job fails if verify fails)"
+            echo
+            echo "=== hdiutil verify ==="
+            echo "result=passed (job fails if verify fails)"
+            echo
+            echo "=== spctl --assess --type execute (expected reject; not a pass) ==="
+            echo "exit=${spctl_execute_status}"
+            cat /tmp/spctl-execute.txt
+            echo
+            echo "=== spctl --assess --type open (expected reject; not a pass) ==="
+            echo "exit=${spctl_open_status}"
+            cat /tmp/spctl-open.txt
+          } > "$out/BUILD_INFO.txt"
+
+          shasum -a 256 "$dmg_path" > "$out/SHA256SUMS.txt"
           echo "Collected:"
           ls -la "$out"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: opentypeless-local-first-${{ matrix.artifact }}-unsigned
+          name: opentypeless-local-first-${{ matrix.artifact }}-adhoc
           path: dist-macos/${{ matrix.artifact }}/
           if-no-files-found: error
           retention-days: 14

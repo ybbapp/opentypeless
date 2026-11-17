@@ -76,7 +76,8 @@
     "aiPolish": "AI 润色",
     "enabled": "已启用",
     "disabled": "已禁用",
-    "outputMode": "文字写入"
+    "outputMode": "文字写入",
+    "dictationOnly": "仅听写（不润色）"
   },
   "onboarding": {
     "speakToWrite": "说话即写作 — 实时将语音转化为润色文本",
@@ -110,7 +111,8 @@
       "testButton": "测试连接",
       "connectionOk": "连接成功",
       "connectionFail": "连接失败",
-      "customWhisperConfigured": "Custom Whisper"
+      "customWhisperConfigured": "Custom Whisper",
+      "appleHint": "Apple Speech 不需要 API 密钥。麦克风和“语音识别”是两项分开的 macOS 权限。只有在这台 Mac 和当前语言都支持设备端识别时才会完全本地转写；否则 Apple 仍可能把音频发到其服务器。"
     },
     "llm": {
       "serviceLabel": "AI 润色服务",
@@ -123,7 +125,8 @@
       "modelsAvailable": "个模型可用",
       "baseUrlLabel": "Base URL",
       "connectionOk": "连接成功",
-      "connectionFail": "连接失败"
+      "connectionFail": "连接失败",
+      "optionalHint": "这一步可以跳过，先只听写原文。以后若要 AI 润色，再到设置里填写你自己的 API 密钥，或使用 Ollama 等本地模型。"
     },
     "steps": {
       "welcome": "欢迎",
@@ -141,7 +144,8 @@
       "howItWorks": "使用方法",
       "howItWorksSub": "试试快速录音测试",
       "setupComplete": "设置完成",
-      "getStarted": "开始使用"
+      "getStarted": "开始使用",
+      "aiPolishOptionalSub": "可选。跳过即可只做听写，不启用 AI 润色。"
     },
     "account": {
       "signIn": "登录",
@@ -472,7 +476,22 @@
     "mappingResetConfirm": "删除所有仅保存在本机的应用映射？",
     "mappingResetConfirmAction": "重置映射",
     "mappingNoMappings": "暂无自定义应用映射",
-    "dictationMode": "听写触发方式"
+    "dictationMode": "听写触发方式",
+    "appleSpeechAuthorize": "授权语音识别",
+    "appleSpeechRecheck": "重新检查",
+    "appleSpeechOnDeviceYes": "当前语言支持设备端识别。应用会在可用时要求在设备上完成识别。",
+    "appleSpeechOnDeviceNo": "当前语言未报告支持设备端识别。Apple Speech 可能会把音频发送到 Apple 服务器。",
+    "openMicrophoneSettings": "打开麦克风设置",
+    "openSpeechSettings": "打开语音识别设置",
+    "appleSpeechIssues": {
+      "unsupported_platform": "Apple Speech 仅在 macOS 上可用。",
+      "speech_permission_not_determined": "尚未请求“语音识别”权限。请点击“授权语音识别”。",
+      "speech_permission_denied": "“语音识别”权限已被拒绝。请到“系统设置 → 隐私与安全性 → 语音识别”打开后，再点“重新检查”。",
+      "speech_permission_restricted": "此 Mac 限制了语音识别。",
+      "speech_permission_unknown": "无法确认语音识别权限状态。请尝试授权或重新检查。",
+      "speech_language_unavailable": "Apple Speech 目前不支持这种语言。",
+      "speech_recognizer_unavailable": "无法检查 Apple Speech 识别器是否可用。"
+    }
   },
   "contextFamilies": {
     "email": "邮件",

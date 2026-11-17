@@ -1,7 +1,5 @@
 use crate::credentials::{resolve_config_secret, SystemCredentialVault};
 use crate::SessionTokenStore;
-use crate::{api_base_url, with_desktop_client_version};
-
 #[tauri::command]
 pub fn get_llm_model_capability(
     provider: String,
@@ -16,22 +14,7 @@ pub fn get_llm_model_capability(
     )
 }
 
-fn synthetic_operation_id() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-
-    format!(
-        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-        (now >> 96) as u32,
-        (now >> 80) as u16,
-        (now >> 64) as u16,
-        (now >> 48) as u16,
-        now & 0x0000_ffff_ffff_ffff_ffffu128
-    )
-}
-
+#[cfg(test)]
 fn has_managed_cloud_access(body: &serde_json::Value) -> bool {
     if matches!(
         body["licenseStatus"].as_str(),
@@ -63,37 +46,15 @@ pub async fn test_llm_connection(
     provider: String,
     base_url: String,
     model: String,
-    token_store: tauri::State<'_, SessionTokenStore>,
+    _token_store: tauri::State<'_, SessionTokenStore>,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<bool, String> {
     if provider.is_empty() {
         return Ok(false);
     }
 
-    // Cloud provider: verify session token + managed cloud entitlement via API.
     if provider == "cloud" {
-        let token = token_store
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        if token.is_empty() {
-            return Ok(false);
-        }
-        let api_base = api_base_url();
-        let resp = with_desktop_client_version(
-            client.get(format!("{}/api/subscription/status", api_base)),
-        )
-        .header("Authorization", format!("Bearer {}", token))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Ok(false);
-        }
-        let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-        return Ok(has_managed_cloud_access(&body));
+        return Err(crate::official_managed_cloud_removed_error());
     }
 
     let api_key = resolve_config_secret(&api_key, "llm", &provider, &SystemCredentialVault)
@@ -286,7 +247,7 @@ pub async fn bench_llm_connection(
     provider: String,
     base_url: String,
     model: String,
-    token_store: tauri::State<'_, SessionTokenStore>,
+    _token_store: tauri::State<'_, SessionTokenStore>,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<u32, String> {
     if provider.is_empty() {
@@ -294,44 +255,7 @@ pub async fn bench_llm_connection(
     }
 
     if provider == "cloud" {
-        let token = token_store
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        if token.is_empty() {
-            return Err("Not signed in".to_string());
-        }
-        let api_base = api_base_url();
-        let operation_id = synthetic_operation_id();
-        let body = serde_json::json!({
-            "messages": [{"role": "user", "content": "hi"}],
-            "stream": false,
-            "context": {
-                "operationId": operation_id.clone(),
-                "stageKey": format!("{operation_id}:llm"),
-                "requestType": "connection_benchmark",
-                "clientVersion": crate::desktop_client_version(),
-                "rawTextChars": 2,
-                "selectedTextChars": 0,
-                "hasSelectedText": false,
-                "translateEnabled": false
-            }
-        });
-        let t0 = std::time::Instant::now();
-        let resp = with_desktop_client_version(client.post(format!("{}/api/proxy/llm", api_base)))
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        let elapsed = t0.elapsed().as_millis() as u32;
-        if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
-        }
-        return Ok(elapsed);
+        return Err(crate::official_managed_cloud_removed_error());
     }
 
     let api_key = resolve_config_secret(&api_key, "llm", &provider, &SystemCredentialVault)

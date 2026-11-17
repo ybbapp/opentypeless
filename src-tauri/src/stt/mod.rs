@@ -74,16 +74,9 @@ pub fn create_provider(
     client: Option<reqwest::Client>,
 ) -> Result<Box<dyn SttProvider>, AppError> {
     match provider_name {
-        "cloud" => {
-            let api_base_url = crate::api_base_url();
-            Ok(match client {
-                Some(ref c) => Box::new(cloud::CloudSttProvider::with_client(
-                    api_base_url,
-                    c.clone(),
-                )),
-                None => Box::new(cloud::CloudSttProvider::new(api_base_url)),
-            })
-        }
+        "cloud" => Err(AppError::Config(
+            crate::official_managed_cloud_removed_error(),
+        )),
         "assemblyai" => Ok(Box::new(assemblyai::AssemblyAiProvider::new())),
         "deepgram" => Ok(Box::new(deepgram::DeepgramProvider::new())),
         aliyun_qwen3_asr::ALIYUN_QWEN3_ASR_PROVIDER => {

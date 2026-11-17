@@ -671,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn onboarding_draft_cannot_clear_a_fresh_native_cloud_limit() {
+    fn onboarding_draft_migrates_official_cloud_and_drops_managed_capability() {
         let current = native_cloud_config("current-user", 0);
         let draft = storage::AppConfig {
             stt_provider: "cloud".to_string(),
@@ -683,16 +683,14 @@ mod tests {
             Some(&current),
         ))
         .unwrap();
-        assert_eq!(saved.max_recording_seconds, 600);
+        assert_eq!(saved.stt_provider, crate::default_stt_provider());
+        assert_ne!(saved.stt_provider, "cloud");
+        assert!(saved.managed_stt_capability_state.is_none());
         assert_eq!(saved.theme, "dark");
-        assert_eq!(
-            saved.managed_stt_capability_state,
-            current.managed_stt_capability_state
-        );
     }
 
     #[test]
-    fn settings_snapshot_cannot_replace_a_newer_native_capability() {
+    fn settings_snapshot_drops_official_managed_capability() {
         let current = native_cloud_config("current-user", 0);
         let stale_draft = native_cloud_config("old-user", 25);
         let saved = prepare_config_for_save(storage::config_with_native_managed_state(
@@ -700,11 +698,8 @@ mod tests {
             Some(&current),
         ))
         .unwrap();
-        assert_eq!(saved.max_recording_seconds, 600);
-        assert_eq!(
-            saved.managed_stt_capability_state.unwrap().user_id,
-            "current-user"
-        );
+        assert_eq!(saved.stt_provider, crate::default_stt_provider());
+        assert!(saved.managed_stt_capability_state.is_none());
     }
 
     #[test]

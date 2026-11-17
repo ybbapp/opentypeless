@@ -3,7 +3,6 @@ use crate::storage;
 use crate::stt;
 use crate::stt::SttProvider;
 use crate::SessionTokenStore;
-use crate::{api_base_url, with_desktop_client_version};
 use tauri::Emitter;
 
 #[tauri::command]
@@ -127,6 +126,7 @@ async fn check_aliyun_qwen3_connection(
     Ok(())
 }
 
+#[cfg(test)]
 fn has_managed_cloud_access(body: &serde_json::Value) -> bool {
     if matches!(
         body["licenseStatus"].as_str(),
@@ -275,6 +275,7 @@ fn build_stt_provider_diagnostics(
     custom_base_url: Option<&str>,
     custom_model: Option<&str>,
     provider_region: Option<&str>,
+    language: Option<&str>,
 ) -> SttProviderDiagnostics {
     match provider {
         "" => SttProviderDiagnostics {
@@ -292,17 +293,20 @@ fn build_stt_provider_diagnostics(
         },
         "cloud" => SttProviderDiagnostics {
             provider: provider.to_string(),
-            kind: "cloudManaged".to_string(),
+            kind: "unknown".to_string(),
             endpoint: None,
             model: None,
             requires_api_key: false,
             api_key_configured: false,
-            ready: true,
-            issues: Vec::new(),
+            ready: false,
+            issues: vec![diagnostic_issue(
+                "official_cloud_removed",
+                crate::OFFICIAL_MANAGED_CLOUD_REMOVED,
+            )],
         },
         stt::config::APPLE_SPEECH_PROVIDER => build_apple_speech_diagnostics(
             provider,
-            stt::apple_speech::apple_speech_availability(None),
+            stt::apple_speech::apple_speech_availability(language),
         ),
         stt::config::CUSTOM_WHISPER_PROVIDER => {
             let api_key_configured = !api_key.trim().is_empty();
@@ -383,6 +387,7 @@ pub fn get_stt_provider_diagnostics(
     custom_base_url: Option<String>,
     custom_model: Option<String>,
     provider_region: Option<String>,
+    language: Option<String>,
 ) -> Result<SttProviderDiagnostics, String> {
     let resolved_api_key = if provider == "cloud" {
         String::new()
@@ -397,7 +402,21 @@ pub fn get_stt_provider_diagnostics(
         custom_base_url.as_deref(),
         custom_model.as_deref(),
         provider_region.as_deref(),
+        language.as_deref(),
     ))
+}
+
+#[tauri::command]
+pub fn get_apple_speech_availability(
+    language: Option<String>,
+) -> stt::apple_speech::AppleSpeechAvailability {
+    stt::apple_speech::apple_speech_availability(language.as_deref())
+}
+
+#[tauri::command]
+pub fn request_apple_speech_authorization(
+) -> Result<stt::apple_speech::AppleSpeechAuthorizationStatus, String> {
+    stt::apple_speech::request_apple_speech_authorization().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -410,37 +429,15 @@ pub async fn test_stt_connection(
     custom_model: Option<String>,
     volcengine_resource_id: Option<String>,
     provider_region: Option<String>,
-    token_store: tauri::State<'_, SessionTokenStore>,
+    _token_store: tauri::State<'_, SessionTokenStore>,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<bool, String> {
     if provider.is_empty() {
         return Ok(false);
     }
 
-    // Cloud provider: verify session token + managed cloud entitlement via API.
     if provider == "cloud" {
-        let token = token_store
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        if token.is_empty() {
-            return Ok(false);
-        }
-        let api_base = api_base_url();
-        let resp = with_desktop_client_version(
-            client.get(format!("{}/api/subscription/status", api_base)),
-        )
-        .header("Authorization", format!("Bearer {}", token))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Ok(false);
-        }
-        let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-        return Ok(has_managed_cloud_access(&body));
+        return Err(crate::official_managed_cloud_removed_error());
     }
 
     let api_key = resolve_config_secret(&api_key, "stt", &provider, &SystemCredentialVault)
@@ -561,6 +558,7 @@ mod tests {
             Some("http://localhost:8000/v1"),
             Some("Systran/faster-whisper-large-v3"),
             None,
+            None,
         );
 
         assert_eq!(diagnostics.provider, stt::config::CUSTOM_WHISPER_PROVIDER);
@@ -586,6 +584,7 @@ mod tests {
             Some("file:///tmp/server"),
             Some(" "),
             None,
+            None,
         );
 
         assert_eq!(diagnostics.kind, "localCompatible");
@@ -596,7 +595,7 @@ mod tests {
 
     #[test]
     fn remote_stt_diagnostics_requires_api_key() {
-        let diagnostics = build_stt_provider_diagnostics("deepgram", "", None, None, None);
+        let diagnostics = build_stt_provider_diagnostics("deepgram", "", None, None, None, None);
 
         assert_eq!(diagnostics.kind, "byokRemote");
         assert!(diagnostics.requires_api_key);
@@ -613,6 +612,7 @@ mod tests {
             None,
             None,
             Some(stt::aliyun_qwen3_asr::ALIYUN_QWEN3_ASR_REGION_INTERNATIONAL),
+            None,
         );
 
         assert_eq!(diagnostics.kind, "byokRemote");
@@ -629,7 +629,8 @@ mod tests {
 
     #[test]
     fn apple_speech_diagnostics_are_platform_gated_builtin_local() {
-        let diagnostics = build_stt_provider_diagnostics("apple-speech", "", None, None, None);
+        let diagnostics =
+            build_stt_provider_diagnostics("apple-speech", "", None, None, None, None);
 
         assert_eq!(diagnostics.provider, "apple-speech");
         assert_eq!(diagnostics.kind, "builtinLocal");
@@ -662,6 +663,7 @@ mod tests {
                 true,
                 stt::apple_speech::AppleSpeechAuthorizationStatus::Denied,
                 Some("en-US".to_string()),
+                None,
                 None,
             ),
         );
@@ -726,7 +728,7 @@ pub async fn bench_stt_connection(
     custom_model: Option<String>,
     volcengine_resource_id: Option<String>,
     provider_region: Option<String>,
-    token_store: tauri::State<'_, SessionTokenStore>,
+    _token_store: tauri::State<'_, SessionTokenStore>,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<u32, String> {
     if provider.is_empty() {
@@ -734,33 +736,7 @@ pub async fn bench_stt_connection(
     }
 
     if provider == "cloud" {
-        let token = token_store
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        if token.is_empty() {
-            return Err("Not signed in".to_string());
-        }
-        let api_base = api_base_url();
-        let t0 = std::time::Instant::now();
-        let resp = with_desktop_client_version(
-            client.get(format!("{}/api/subscription/status", api_base)),
-        )
-        .header("Authorization", format!("Bearer {}", token))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-        let elapsed = t0.elapsed().as_millis() as u32;
-        if !resp.status().is_success() {
-            return Err("Request failed".to_string());
-        }
-        let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-        if !has_managed_cloud_access(&body) {
-            return Err("Cloud plan required".to_string());
-        }
-        return Ok(elapsed);
+        return Err(crate::official_managed_cloud_removed_error());
     }
 
     let api_key = resolve_config_secret(&api_key, "stt", &provider, &SystemCredentialVault)

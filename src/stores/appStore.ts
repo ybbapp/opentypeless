@@ -24,7 +24,6 @@ export type SttProvider =
   | 'siliconflow'
   | 'apple-speech'
   | 'custom-whisper'
-  | 'cloud'
 
 export type AliyunQwenRegion = 'china-mainland' | 'international'
 export type LlmProvider =
@@ -40,7 +39,6 @@ export type LlmProvider =
   | 'claude'
   | 'ollama'
   | 'openrouter'
-  | 'cloud'
 export type OutputMode = 'keyboard' | 'clipboard'
 export type PasteShortcut = 'ctrlV' | 'ctrlShiftV' | 'shiftInsert'
 export type WindowsSendInputNewlineMode = 'enter' | 'shiftEnter' | 'crlf'
@@ -300,8 +298,8 @@ interface AppState {
   setOnboardingCompleted: (done: boolean) => void
   onboardingStep: number
   setOnboardingStep: (step: number) => void
-  onboardingMode: 'cloud' | 'byok' | null
-  setOnboardingMode: (mode: 'cloud' | 'byok' | null) => void
+  onboardingMode: 'local' | 'byok' | null
+  setOnboardingMode: (mode: 'local' | 'byok' | null) => void
 
   // Capsule
   capsuleExpanded: boolean
@@ -354,6 +352,10 @@ interface AppState {
 
 export const isMacPlatform = () =>
   typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
+
+export function defaultSttProvider(): SttProvider {
+  return isMacPlatform() ? 'apple-speech' : 'glm-asr'
+}
 
 export const isWindowsPlatform = () =>
   typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('WIN') >= 0
@@ -734,7 +736,7 @@ const defaultConfig: AppConfig = {
   llm_api_key: '',
   llm_model: 'google/gemini-2.5-flash',
   llm_base_url: 'https://openrouter.ai/api/v1',
-  polish_enabled: true,
+  polish_enabled: false,
   context_adaptation_enabled: true,
   voice_routing_flags: {
     draft_insert: true,

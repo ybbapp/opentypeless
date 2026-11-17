@@ -1373,9 +1373,14 @@ impl PipelineHandle {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Audio capture failed: {}", e);
-                let _ = self
-                    .app_handle
-                    .emit("pipeline:error", format!("Audio capture failed: {e}"));
+                let _ = self.app_handle.emit(
+                    "pipeline:error",
+                    crate::error::UserError {
+                        code: "audio_failed".to_string(),
+                        details: Some(e.to_string()),
+                        retry_count: 0,
+                    },
+                );
                 *self
                     .preloaded_config
                     .lock()
@@ -1404,21 +1409,33 @@ impl PipelineHandle {
         let capture_ready_at = match startup_result {
             Ok(capture_ready_at) => capture_ready_at,
             Err(error) => {
-                let message = match error {
-                    crate::audio::RecordingStartupError::Audio(error) => {
-                        format!("Audio capture failed: {error}")
-                    }
-                    crate::audio::RecordingStartupError::Stt(error) => {
-                        format!("STT connection failed: {error}")
-                    }
-                    crate::audio::RecordingStartupError::Timeout => {
-                        "Recording startup timed out after 30 seconds. Please try again."
-                            .to_string()
-                    }
+                let user_error = match error {
+                    crate::audio::RecordingStartupError::Audio(error) => crate::error::UserError {
+                        code: "audio_failed".to_string(),
+                        details: Some(error.to_string()),
+                        retry_count: 0,
+                    },
+                    crate::audio::RecordingStartupError::Stt(error) => crate::error::UserError {
+                        code: "stt_connection_failed".to_string(),
+                        details: Some(error.to_string()),
+                        retry_count: 0,
+                    },
+                    crate::audio::RecordingStartupError::Timeout => crate::error::UserError {
+                        code: "stt_timeout".to_string(),
+                        details: Some(
+                            "Recording startup timed out after 30 seconds. Please try again."
+                                .to_string(),
+                        ),
+                        retry_count: 0,
+                    },
                 };
-                tracing::error!("Recording startup failed: {}", message);
+                tracing::error!(
+                    "Recording startup failed: {} {:?}",
+                    user_error.code,
+                    user_error.details
+                );
                 handle.stop();
-                let _ = self.app_handle.emit("pipeline:error", message);
+                let _ = self.app_handle.emit("pipeline:error", user_error);
                 *self
                     .preloaded_config
                     .lock()
@@ -2984,8 +3001,8 @@ impl PipelineHandle {
 
         let stt_endpoint = match config.stt_provider.as_str() {
             "cloud" => {
-                let base = crate::api_base_url();
-                Some((format!("{}/api/proxy/stt", base), true))
+                tracing::warn!("{}", crate::OFFICIAL_MANAGED_CLOUD_REMOVED);
+                None
             }
             "glm-asr" => Some((
                 "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions".to_string(),
@@ -3028,8 +3045,8 @@ impl PipelineHandle {
 
         let llm_endpoint = if config.polish_enabled {
             if config.llm_provider == "cloud" {
-                let base = crate::api_base_url();
-                Some((format!("{}/api/proxy/llm", base), true))
+                tracing::warn!("{}", crate::OFFICIAL_MANAGED_CLOUD_REMOVED);
+                None
             } else {
                 crate::llm::protocol::chat_endpoint(&config.llm_provider, &config.llm_base_url)
                     .ok()

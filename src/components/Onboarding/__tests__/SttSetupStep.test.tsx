@@ -33,11 +33,29 @@ vi.mock('react-i18next', () => ({
 }))
 
 vi.mock('../../../stores/appStore', () => ({
+  isMacPlatform: () => false,
   useAppStore: (selector: any) => selector(mockStore),
 }))
 
 vi.mock('../../../lib/tauri', () => ({
   testSttConnection: vi.fn().mockResolvedValue(true),
+  getAppleSpeechAvailability: vi.fn().mockResolvedValue({
+    platformSupported: false,
+    authorizationStatus: 'notDetermined',
+    locale: null,
+    recognizerAvailable: null,
+    ready: false,
+    issueCode: 'unsupported_platform',
+    issueMessage: 'Apple Speech is only available on macOS.',
+    supportsOnDeviceRecognition: null,
+  }),
+  requestAppleSpeechAuthorization: vi.fn().mockResolvedValue('denied'),
+  getSttProviderDiagnostics: vi.fn().mockResolvedValue({
+    provider: 'deepgram',
+    kind: 'hosted',
+    ready: true,
+    issues: [],
+  }),
 }))
 
 beforeEach(() => {

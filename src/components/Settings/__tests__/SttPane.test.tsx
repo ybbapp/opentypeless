@@ -66,6 +66,12 @@ vi.mock('react-i18next', () => ({
         'settings.localSttNeedsSetup': 'Local endpoint needs setup',
         'settings.appleSpeechReady': 'Apple Speech ready',
         'settings.appleSpeechUnavailable': 'Apple Speech unavailable',
+        'settings.appleSpeechAuthorize': 'Authorize Speech Recognition',
+        'settings.appleSpeechRecheck': 'Recheck',
+        'settings.appleSpeechOnDeviceYes': 'On-device yes',
+        'settings.appleSpeechOnDeviceNo': 'On-device no',
+        'settings.openMicrophoneSettings': 'Open Microphone settings',
+        'settings.openSpeechSettings': 'Open Speech Recognition settings',
         'settings.customSttConnectionFailed':
           'Local STT server is not reachable. Check that it is running and the port is correct.',
         'settings.volcengineSttKeyHint':
@@ -120,15 +126,8 @@ const mockAppStore = {
   },
 }
 
-const mockAuthStore = {
-  user: null as any,
-  plan: null as any,
-  source: 'free',
-  cloudWordsLimit: 0,
-  licenseStatus: null as any,
-}
-
 vi.mock('../../../stores/appStore', () => ({
+  isMacPlatform: () => true,
   useAppStore: (selector: any) => {
     if (typeof selector === 'function') {
       return selector(mockAppStore)
@@ -137,517 +136,408 @@ vi.mock('../../../stores/appStore', () => ({
   },
 }))
 
-vi.mock('../../../stores/authStore', () => ({
-  hasManagedCloudAccess: (state: typeof mockAuthStore) =>
-    state.licenseStatus !== 'refunded' &&
-    state.licenseStatus !== 'deactivated' &&
-    ((state.source === 'creem' && state.cloudWordsLimit > 0) ||
-      (state.source === 'appsumo' &&
-        state.cloudWordsLimit > 0 &&
-        state.licenseStatus === 'active') ||
-      state.plan === 'pro'),
-  useAuthStore: (selector: any) => {
-    if (typeof selector === 'function') {
-      return selector(mockAuthStore)
-    }
-    return mockAuthStore
-  },
-}))
+beforeEach(() => {
+  mockAppStore.config = {
+    stt_provider: 'deepgram',
+    stt_api_key: '',
+    stt_custom_api_key: '',
+    stt_language: 'en',
+    stt_custom_preset: 'speaches',
+    stt_custom_base_url: 'http://localhost:8000/v1',
+    stt_custom_model: 'Systran/faster-whisper-large-v3',
+    stt_volcengine_resource_id: 'volc.seedasr.sauc.duration',
+    stt_aliyun_qwen_region: 'china-mainland',
+    recording_limit_mode: 'auto',
+    custom_recording_limit_seconds: 600,
+    max_recording_seconds: 600,
+  }
+  mockAppStore.sttTestStatus = 'idle'
+  mockAppStore.sttLatencyMs = null
+  mockAppStore.platformCapabilities = {
+    os: 'macos',
+    sessionType: 'unknown',
+    globalHotkeyReliable: true,
+    keyboardOutputReliable: true,
+    clipboardAutoPasteReliable: true,
+  }
 
-describe('SttPane', () => {
-  beforeEach(() => {
-    // Reset mock store state
-    mockAppStore.config = {
-      stt_provider: 'deepgram',
-      stt_api_key: '',
-      stt_custom_api_key: '',
-      stt_language: 'en',
-      stt_custom_preset: 'speaches',
-      stt_custom_base_url: 'http://localhost:8000/v1',
-      stt_custom_model: 'Systran/faster-whisper-large-v3',
-      stt_volcengine_resource_id: 'volc.seedasr.sauc.duration',
-      stt_aliyun_qwen_region: 'china-mainland',
-      recording_limit_mode: 'auto',
-      custom_recording_limit_seconds: 600,
-      max_recording_seconds: 600,
-    }
-    mockAppStore.sttTestStatus = 'idle'
-    mockAppStore.sttLatencyMs = null
+  vi.clearAllMocks()
+  vi.mocked(tauri.readCredential).mockResolvedValue(null)
+  vi.mocked(tauri.setCredential).mockResolvedValue(undefined)
+  vi.mocked(tauri.getSttRecordingCapability).mockResolvedValue({
+    capability: {
+      registryVersion: 1,
+      providerId: 'deepgram',
+      transport: 'streaming',
+      recommendedMaxSeconds: 600,
+      hardMaxSeconds: 3600,
+      maxUploadBytes: null,
+      source: 'productSafety',
+      explanationKey: 'recordingLimits.reasons.productSafety',
+    },
+    mode: 'auto',
+    requestedSeconds: 600,
+    effectiveMaxSeconds: 600,
+  })
+  vi.mocked(tauri.getSttProviderDiagnostics).mockResolvedValue({
+    provider: 'custom-whisper',
+    kind: 'localCompatible',
+    endpoint: 'http://localhost:8000/v1/audio/transcriptions',
+    model: 'Systran/faster-whisper-large-v3',
+    requiresApiKey: false,
+    apiKeyConfigured: false,
+    ready: true,
+    issues: [],
+  })
+  vi.mocked(tauri.getAppleSpeechAvailability).mockResolvedValue({
+    platformSupported: true,
+    authorizationStatus: 'notDetermined',
+    locale: 'en-US',
+    recognizerAvailable: true,
+    ready: false,
+    issueCode: 'speech_permission_not_determined',
+    issueMessage: 'Speech Recognition is not authorized yet.',
+    supportsOnDeviceRecognition: false,
+  })
+  vi.mocked(tauri.requestAppleSpeechAuthorization).mockResolvedValue('authorized')
+})
+
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
+
+describe('Provider selection', () => {
+  it('renders provider dropdown with current value', () => {
+    render(<SttPane />)
+    const selects = screen.getAllByRole('combobox')
+    const providerSelect = selects[0] // First select is provider
+    expect(providerSelect).toHaveValue('deepgram')
+  })
+
+  it('lists Volcengine Doubao realtime ASR as an STT provider', () => {
+    render(<SttPane />)
+    expect(screen.getByRole('option', { name: 'Volcengine Doubao Realtime ASR' })).toHaveValue(
+      'volcengine-doubao',
+    )
+  })
+
+  it('lists Aliyun Qwen3 realtime ASR as an STT provider', () => {
+    render(<SttPane />)
+    expect(screen.getByRole('option', { name: 'Aliyun Qwen3 Realtime ASR' })).toHaveValue(
+      'aliyun-qwen3-asr',
+    )
+  })
+
+  it('shows a persisted Beijing or Singapore region selector for Aliyun Qwen3', () => {
+    mockAppStore.config.stt_provider = 'aliyun-qwen3-asr'
+
+    render(<SttPane />)
+
+    const region = screen.getByLabelText('Service region')
+    expect(region).toHaveValue('china-mainland')
+    expect(
+      screen.getByText(
+        'Use the region where your DashScope API key was created. Keys are region-specific.',
+      ),
+    ).toBeInTheDocument()
+
+    fireEvent.change(region, { target: { value: 'international' } })
+
+    expect(mockAppStore.updateConfig).toHaveBeenCalledWith({
+      stt_aliyun_qwen_region: 'international',
+    })
+    expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('idle')
+    expect(mockAppStore.setSttLatencyMs).toHaveBeenCalledWith(null)
+  })
+
+  it('tests Aliyun Qwen3 against the selected region', async () => {
+    mockAppStore.config.stt_provider = 'aliyun-qwen3-asr'
+    mockAppStore.config.stt_aliyun_qwen_region = 'international'
+    mockAppStore.config.stt_api_key = 'sk-international'
+    vi.mocked(tauri.benchSttConnection).mockResolvedValueOnce(120)
+
+    render(<SttPane />)
+    fireEvent.click(screen.getAllByRole('button', { name: /test/i })[0])
+
+    await waitFor(() => {
+      expect(tauri.benchSttConnection).toHaveBeenCalledWith(
+        'sk-international',
+        'aliyun-qwen3-asr',
+        undefined,
+        undefined,
+        undefined,
+        'international',
+      )
+    })
+  })
+
+  it('shows Apple Speech as a built-in local provider on macOS only', () => {
+    render(<SttPane />)
+
+    expect(screen.getByRole('option', { name: 'Apple Speech (Local)' })).toHaveValue('apple-speech')
+
+    cleanup()
     mockAppStore.platformCapabilities = {
-      os: 'macos',
+      os: 'windows',
       sessionType: 'unknown',
       globalHotkeyReliable: true,
       keyboardOutputReliable: true,
       clipboardAutoPasteReliable: true,
     }
-    mockAuthStore.user = null
-    mockAuthStore.plan = null
-    mockAuthStore.source = 'free'
-    mockAuthStore.cloudWordsLimit = 0
-    mockAuthStore.licenseStatus = null
+    render(<SttPane />)
 
-    // Clear all mock function calls
-    vi.clearAllMocks()
-    vi.mocked(tauri.readCredential).mockResolvedValue(null)
-    vi.mocked(tauri.setCredential).mockResolvedValue(undefined)
-    vi.mocked(tauri.getSttRecordingCapability).mockResolvedValue({
-      capability: {
-        registryVersion: 1,
-        providerId: 'deepgram',
-        transport: 'streaming',
-        recommendedMaxSeconds: 600,
-        hardMaxSeconds: 3600,
-        maxUploadBytes: null,
-        source: 'productSafety',
-        explanationKey: 'recordingLimits.reasons.productSafety',
-      },
-      mode: 'auto',
-      requestedSeconds: 600,
-      effectiveMaxSeconds: 600,
-    })
-    vi.mocked(tauri.getSttProviderDiagnostics).mockResolvedValue({
-      provider: 'custom-whisper',
-      kind: 'localCompatible',
-      endpoint: 'http://localhost:8000/v1/audio/transcriptions',
-      model: 'Systran/faster-whisper-large-v3',
+    expect(screen.queryByRole('option', { name: 'Apple Speech (Local)' })).not.toBeInTheDocument()
+  })
+
+  it('does not show API key input for Apple Speech and can test without credentials', async () => {
+    mockAppStore.config.stt_provider = 'apple-speech'
+    vi.mocked(tauri.getSttProviderDiagnostics).mockResolvedValueOnce({
+      provider: 'apple-speech',
+      kind: 'builtinLocal',
+      endpoint: null,
+      model: 'Apple Speech',
       requiresApiKey: false,
       apiKeyConfigured: false,
       ready: true,
       issues: [],
     })
+    vi.mocked(tauri.benchSttConnection).mockResolvedValueOnce(0)
+
+    const { container } = render(<SttPane />)
+
+    expect(container.querySelector('input[placeholder="Enter API Key"]')).toBeNull()
+    expect(await screen.findByText('Apple Speech ready')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /test/i }))
+
+    await waitFor(() => {
+      expect(tauri.benchSttConnection).toHaveBeenCalledWith('', 'apple-speech')
+    })
   })
 
-  afterEach(() => {
-    cleanup()
-    vi.clearAllMocks()
+  it('shows a credential hint for Volcengine Doubao realtime ASR', () => {
+    mockAppStore.config.stt_provider = 'volcengine-doubao'
+
+    render(<SttPane />)
+
+    expect(
+      screen.getByText(
+        'Use a Volcengine Speech API key, or app_id:access_token from the old console. Ark LLM keys are separate.',
+      ),
+    ).toBeInTheDocument()
   })
 
-  describe('Provider selection', () => {
-    it('renders provider dropdown with current value', () => {
-      render(<SttPane />)
-      const selects = screen.getAllByRole('combobox')
-      const providerSelect = selects[0] // First select is provider
-      expect(providerSelect).toHaveValue('deepgram')
+  it('shows and updates Volcengine ASR resource id', () => {
+    mockAppStore.config.stt_provider = 'volcengine-doubao'
+
+    render(<SttPane />)
+
+    const resourceSelect = screen.getByLabelText('Volcengine ASR resource')
+    expect(resourceSelect).toHaveValue('volc.seedasr.sauc.duration')
+
+    fireEvent.change(resourceSelect, { target: { value: 'volc.bigasr.sauc.duration' } })
+
+    expect(mockAppStore.updateConfig).toHaveBeenCalledWith({
+      stt_volcengine_resource_id: 'volc.bigasr.sauc.duration',
+    })
+    expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('idle')
+    expect(mockAppStore.setSttLatencyMs).toHaveBeenCalledWith(null)
+  })
+
+  it('updates config and resets state when provider changes', () => {
+    render(<SttPane />)
+    const selects = screen.getAllByRole('combobox')
+    const providerSelect = selects[0]
+
+    fireEvent.change(providerSelect, { target: { value: 'assemblyai' } })
+
+    expect(mockAppStore.updateConfig).toHaveBeenCalledWith({ stt_provider: 'assemblyai' })
+    expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('idle')
+    expect(mockAppStore.setSttLatencyMs).toHaveBeenCalledWith(null)
+  })
+})
+
+describe('Recording limit', () => {
+  it('shows the Rust-resolved Auto value and governing reason', async () => {
+    render(<SttPane />)
+
+    expect(
+      await screen.findByRole('option', { name: /Auto \(recommended,.*10 minutes/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Product safety limit')).toBeInTheDocument()
+    expect(tauri.getSttRecordingCapability).toHaveBeenCalledWith('deepgram', 'auto', 600)
+  })
+
+  it('filters choices in the single duration selector using the Rust hard maximum', async () => {
+    mockAppStore.config.stt_provider = 'glm-asr'
+    mockAppStore.config.recording_limit_mode = 'custom'
+    mockAppStore.config.custom_recording_limit_seconds = 600
+    vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
+      capability: {
+        registryVersion: 1,
+        providerId: 'glm-asr',
+        transport: 'fileUpload',
+        recommendedMaxSeconds: 30,
+        hardMaxSeconds: 30,
+        maxUploadBytes: 24 * 1024 * 1024,
+        source: 'provider',
+        explanationKey: 'recordingLimits.reasons.providerDuration',
+      },
+      mode: 'custom',
+      requestedSeconds: 600,
+      effectiveMaxSeconds: 30,
     })
 
-    it('lists Volcengine Doubao realtime ASR as an STT provider', () => {
-      render(<SttPane />)
-      expect(screen.getByRole('option', { name: 'Volcengine Doubao Realtime ASR' })).toHaveValue(
-        'volcengine-doubao',
-      )
+    render(<SttPane />)
+
+    const duration = await screen.findByLabelText('Single recording duration')
+    expect(within(duration).getByRole('option', { name: '30 seconds' })).toBeInTheDocument()
+    expect(within(duration).queryByRole('option', { name: '1 minute' })).not.toBeInTheDocument()
+    expect(
+      within(duration).queryByRole('option', { name: 'Custom duration…' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText('This provider allows recordings up to 30 seconds.'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('This provider will use 30 seconds.')).toBeInTheDocument()
+  })
+
+  it('shows one selected duration and distinguishes it from the Cloud maximum', async () => {
+    mockAppStore.config.stt_provider = 'cloud'
+    mockAppStore.config.recording_limit_mode = 'custom'
+    mockAppStore.config.custom_recording_limit_seconds = 30
+    vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
+      capability: {
+        registryVersion: 1,
+        providerId: 'cloud',
+        transport: 'managedUpload',
+        recommendedMaxSeconds: 600,
+        hardMaxSeconds: 600,
+        maxUploadBytes: 4_000_000,
+        source: 'managedProduct',
+        explanationKey: 'recordingLimits.reasons.managedCapability',
+      },
+      mode: 'custom',
+      requestedSeconds: 30,
+      effectiveMaxSeconds: 30,
     })
 
-    it('lists Aliyun Qwen3 realtime ASR as an STT provider', () => {
-      render(<SttPane />)
-      expect(screen.getByRole('option', { name: 'Aliyun Qwen3 Realtime ASR' })).toHaveValue(
-        'aliyun-qwen3-asr',
-      )
+    render(<SttPane />)
+
+    const duration = await screen.findByLabelText('Single recording duration')
+    expect(duration).toHaveValue('30')
+    expect(screen.queryByLabelText('Recording limit presets')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Custom duration')).not.toBeInTheDocument()
+    expect(
+      screen.getByText('Current: 30 seconds. Cloud supports up to 10 minutes.'),
+    ).toBeInTheDocument()
+  })
+
+  it('reveals a bounded numeric entry only after Custom duration is selected', async () => {
+    mockAppStore.config.stt_provider = 'cloud'
+    vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
+      capability: {
+        registryVersion: 1,
+        providerId: 'cloud',
+        transport: 'managedUpload',
+        recommendedMaxSeconds: 600,
+        hardMaxSeconds: 600,
+        maxUploadBytes: 4_000_000,
+        source: 'managedProduct',
+        explanationKey: 'recordingLimits.reasons.managedCapability',
+      },
+      mode: 'auto',
+      requestedSeconds: 600,
+      effectiveMaxSeconds: 600,
+    })
+    render(<SttPane />)
+
+    const duration = await screen.findByLabelText('Single recording duration')
+    expect(screen.queryByLabelText('Custom duration')).not.toBeInTheDocument()
+
+    fireEvent.change(duration, { target: { value: 'custom' } })
+    expect(mockAppStore.updateConfig).toHaveBeenCalledWith({ recording_limit_mode: 'custom' })
+
+    const input = await screen.findByLabelText('Custom duration')
+    expect(input).toHaveAttribute('min', '30')
+    expect(input).toHaveAttribute('max', '600')
+    expect(screen.getByText('seconds')).toBeInTheDocument()
+    expect(
+      screen.getByText('Range: 30 seconds–10 minutes. Set by current Cloud capability.'),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Current: 10 minutes. Cloud supports up to 10 minutes.'),
+    ).not.toBeInTheDocument()
+    fireEvent.change(input, { target: { value: '300' } })
+    expect(mockAppStore.updateConfig).toHaveBeenCalledWith({
+      custom_recording_limit_seconds: 300,
+    })
+  })
+
+  it('describes an app buffer limit without claiming it is provider support', async () => {
+    mockAppStore.config.stt_provider = 'openai-whisper'
+    mockAppStore.config.recording_limit_mode = 'custom'
+    mockAppStore.config.custom_recording_limit_seconds = 600
+    vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
+      capability: {
+        registryVersion: 1,
+        providerId: 'openai-whisper',
+        transport: 'fileUpload',
+        recommendedMaxSeconds: 600,
+        hardMaxSeconds: 720,
+        maxUploadBytes: 24 * 1024 * 1024,
+        source: 'clientBuffer',
+        explanationKey: 'recordingLimits.reasons.clientBuffer',
+      },
+      mode: 'custom',
+      requestedSeconds: 600,
+      effectiveMaxSeconds: 600,
     })
 
-    it('shows a persisted Beijing or Singapore region selector for Aliyun Qwen3', () => {
-      mockAppStore.config.stt_provider = 'aliyun-qwen3-asr'
+    render(<SttPane />)
 
-      render(<SttPane />)
+    expect(
+      await screen.findByText('Selected: 10 minutes; app limit: 12 minutes. Client buffer limit'),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Current: 10 minutes. This service supports up to 12 minutes.'),
+    ).not.toBeInTheDocument()
+  })
 
-      const region = screen.getByLabelText('Service region')
-      expect(region).toHaveValue('china-mainland')
-      expect(
-        screen.getByText(
-          'Use the region where your DashScope API key was created. Keys are region-specific.',
-        ),
-      ).toBeInTheDocument()
-
-      fireEvent.change(region, { target: { value: 'international' } })
-
-      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({
-        stt_aliyun_qwen_region: 'international',
-      })
-      expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('idle')
-      expect(mockAppStore.setSttLatencyMs).toHaveBeenCalledWith(null)
-    })
-
-    it('tests Aliyun Qwen3 against the selected region', async () => {
-      mockAppStore.config.stt_provider = 'aliyun-qwen3-asr'
-      mockAppStore.config.stt_aliyun_qwen_region = 'international'
-      mockAppStore.config.stt_api_key = 'sk-international'
-      vi.mocked(tauri.benchSttConnection).mockResolvedValueOnce(120)
-
-      render(<SttPane />)
-      fireEvent.click(screen.getAllByRole('button', { name: /test/i })[0])
-
-      await waitFor(() => {
-        expect(tauri.benchSttConnection).toHaveBeenCalledWith(
-          'sk-international',
-          'aliyun-qwen3-asr',
-          undefined,
-          undefined,
-          undefined,
-          'international',
-        )
-      })
-    })
-
-    it('shows Apple Speech as a built-in local provider on macOS only', () => {
-      render(<SttPane />)
-
-      expect(screen.getByRole('option', { name: 'Apple Speech (Local)' })).toHaveValue(
-        'apple-speech',
-      )
-
-      cleanup()
-      mockAppStore.platformCapabilities = {
-        os: 'windows',
-        sessionType: 'unknown',
-        globalHotkeyReliable: true,
-        keyboardOutputReliable: true,
-        clipboardAutoPasteReliable: true,
-      }
-      render(<SttPane />)
-
-      expect(screen.queryByRole('option', { name: 'Apple Speech (Local)' })).not.toBeInTheDocument()
-    })
-
-    it('does not show API key input for Apple Speech and can test without credentials', async () => {
+  describe('Apple Speech provider UI', () => {
+    it('keeps Test enabled when Speech Recognition is not ready yet', async () => {
       mockAppStore.config.stt_provider = 'apple-speech'
-      vi.mocked(tauri.getSttProviderDiagnostics).mockResolvedValueOnce({
+      vi.mocked(tauri.getSttProviderDiagnostics).mockResolvedValue({
         provider: 'apple-speech',
         kind: 'builtinLocal',
         endpoint: null,
-        model: 'Apple Speech',
+        model: 'Apple Speech (en-US)',
         requiresApiKey: false,
         apiKeyConfigured: false,
-        ready: true,
-        issues: [],
+        ready: false,
+        issues: [
+          {
+            code: 'speech_permission_not_determined',
+            message: 'Speech Recognition permission has not been requested',
+          },
+        ],
       })
-      vi.mocked(tauri.benchSttConnection).mockResolvedValueOnce(0)
-
-      const { container } = render(<SttPane />)
-
-      expect(container.querySelector('input[placeholder="Enter API Key"]')).toBeNull()
-      expect(await screen.findByText('Apple Speech ready')).toBeInTheDocument()
-
-      fireEvent.click(screen.getByRole('button', { name: /test/i }))
-
-      await waitFor(() => {
-        expect(tauri.benchSttConnection).toHaveBeenCalledWith('', 'apple-speech')
-      })
-    })
-
-    it('shows a credential hint for Volcengine Doubao realtime ASR', () => {
-      mockAppStore.config.stt_provider = 'volcengine-doubao'
 
       render(<SttPane />)
 
       expect(
-        screen.getByText(
-          'Use a Volcengine Speech API key, or app_id:access_token from the old console. Ark LLM keys are separate.',
-        ),
+        await screen.findByText('Speech Recognition permission has not been requested'),
       ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Authorize Speech Recognition' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Test' })).toBeEnabled()
     })
 
-    it('shows and updates Volcengine ASR resource id', () => {
-      mockAppStore.config.stt_provider = 'volcengine-doubao'
-
+    it('requests authorization from the Authorize button', async () => {
+      mockAppStore.config.stt_provider = 'apple-speech'
       render(<SttPane />)
-
-      const resourceSelect = screen.getByLabelText('Volcengine ASR resource')
-      expect(resourceSelect).toHaveValue('volc.seedasr.sauc.duration')
-
-      fireEvent.change(resourceSelect, { target: { value: 'volc.bigasr.sauc.duration' } })
-
-      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({
-        stt_volcengine_resource_id: 'volc.bigasr.sauc.duration',
-      })
-      expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('idle')
-      expect(mockAppStore.setSttLatencyMs).toHaveBeenCalledWith(null)
-    })
-
-    it('updates config and resets state when provider changes', () => {
-      render(<SttPane />)
-      const selects = screen.getAllByRole('combobox')
-      const providerSelect = selects[0]
-
-      fireEvent.change(providerSelect, { target: { value: 'assemblyai' } })
-
-      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({ stt_provider: 'assemblyai' })
-      expect(mockAppStore.setSttTestStatus).toHaveBeenCalledWith('idle')
-      expect(mockAppStore.setSttLatencyMs).toHaveBeenCalledWith(null)
-    })
-  })
-
-  describe('Recording limit', () => {
-    it('shows the Rust-resolved Auto value and governing reason', async () => {
-      render(<SttPane />)
-
-      expect(
-        await screen.findByRole('option', { name: /Auto \(recommended,.*10 minutes/i }),
-      ).toBeInTheDocument()
-      expect(screen.getByText('Product safety limit')).toBeInTheDocument()
-      expect(tauri.getSttRecordingCapability).toHaveBeenCalledWith('deepgram', 'auto', 600)
-    })
-
-    it('filters choices in the single duration selector using the Rust hard maximum', async () => {
-      mockAppStore.config.stt_provider = 'glm-asr'
-      mockAppStore.config.recording_limit_mode = 'custom'
-      mockAppStore.config.custom_recording_limit_seconds = 600
-      vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
-        capability: {
-          registryVersion: 1,
-          providerId: 'glm-asr',
-          transport: 'fileUpload',
-          recommendedMaxSeconds: 30,
-          hardMaxSeconds: 30,
-          maxUploadBytes: 24 * 1024 * 1024,
-          source: 'provider',
-          explanationKey: 'recordingLimits.reasons.providerDuration',
-        },
-        mode: 'custom',
-        requestedSeconds: 600,
-        effectiveMaxSeconds: 30,
-      })
-
-      render(<SttPane />)
-
-      const duration = await screen.findByLabelText('Single recording duration')
-      expect(within(duration).getByRole('option', { name: '30 seconds' })).toBeInTheDocument()
-      expect(within(duration).queryByRole('option', { name: '1 minute' })).not.toBeInTheDocument()
-      expect(
-        within(duration).queryByRole('option', { name: 'Custom duration…' }),
-      ).not.toBeInTheDocument()
-      expect(
-        screen.getByText('This provider allows recordings up to 30 seconds.'),
-      ).toBeInTheDocument()
-      expect(screen.getByText('This provider will use 30 seconds.')).toBeInTheDocument()
-    })
-
-    it('shows one selected duration and distinguishes it from the Cloud maximum', async () => {
-      mockAppStore.config.stt_provider = 'cloud'
-      mockAppStore.config.recording_limit_mode = 'custom'
-      mockAppStore.config.custom_recording_limit_seconds = 30
-      vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
-        capability: {
-          registryVersion: 1,
-          providerId: 'cloud',
-          transport: 'managedUpload',
-          recommendedMaxSeconds: 600,
-          hardMaxSeconds: 600,
-          maxUploadBytes: 4_000_000,
-          source: 'managedProduct',
-          explanationKey: 'recordingLimits.reasons.managedCapability',
-        },
-        mode: 'custom',
-        requestedSeconds: 30,
-        effectiveMaxSeconds: 30,
-      })
-
-      render(<SttPane />)
-
-      const duration = await screen.findByLabelText('Single recording duration')
-      expect(duration).toHaveValue('30')
-      expect(screen.queryByLabelText('Recording limit presets')).not.toBeInTheDocument()
-      expect(screen.queryByLabelText('Custom duration')).not.toBeInTheDocument()
-      expect(
-        screen.getByText('Current: 30 seconds. Cloud supports up to 10 minutes.'),
-      ).toBeInTheDocument()
-    })
-
-    it('reveals a bounded numeric entry only after Custom duration is selected', async () => {
-      mockAppStore.config.stt_provider = 'cloud'
-      vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
-        capability: {
-          registryVersion: 1,
-          providerId: 'cloud',
-          transport: 'managedUpload',
-          recommendedMaxSeconds: 600,
-          hardMaxSeconds: 600,
-          maxUploadBytes: 4_000_000,
-          source: 'managedProduct',
-          explanationKey: 'recordingLimits.reasons.managedCapability',
-        },
-        mode: 'auto',
-        requestedSeconds: 600,
-        effectiveMaxSeconds: 600,
-      })
-      render(<SttPane />)
-
-      const duration = await screen.findByLabelText('Single recording duration')
-      expect(screen.queryByLabelText('Custom duration')).not.toBeInTheDocument()
-
-      fireEvent.change(duration, { target: { value: 'custom' } })
-      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({ recording_limit_mode: 'custom' })
-
-      const input = await screen.findByLabelText('Custom duration')
-      expect(input).toHaveAttribute('min', '30')
-      expect(input).toHaveAttribute('max', '600')
-      expect(screen.getByText('seconds')).toBeInTheDocument()
-      expect(
-        screen.getByText('Range: 30 seconds–10 minutes. Set by current Cloud capability.'),
-      ).toBeInTheDocument()
-      expect(
-        screen.queryByText('Current: 10 minutes. Cloud supports up to 10 minutes.'),
-      ).not.toBeInTheDocument()
-      fireEvent.change(input, { target: { value: '300' } })
-      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({
-        custom_recording_limit_seconds: 300,
-      })
-    })
-
-    it('describes an app buffer limit without claiming it is provider support', async () => {
-      mockAppStore.config.stt_provider = 'openai-whisper'
-      mockAppStore.config.recording_limit_mode = 'custom'
-      mockAppStore.config.custom_recording_limit_seconds = 600
-      vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
-        capability: {
-          registryVersion: 1,
-          providerId: 'openai-whisper',
-          transport: 'fileUpload',
-          recommendedMaxSeconds: 600,
-          hardMaxSeconds: 720,
-          maxUploadBytes: 24 * 1024 * 1024,
-          source: 'clientBuffer',
-          explanationKey: 'recordingLimits.reasons.clientBuffer',
-        },
-        mode: 'custom',
-        requestedSeconds: 600,
-        effectiveMaxSeconds: 600,
-      })
-
-      render(<SttPane />)
-
-      expect(
-        await screen.findByText('Selected: 10 minutes; app limit: 12 minutes. Client buffer limit'),
-      ).toBeInTheDocument()
-      expect(
-        screen.queryByText('Current: 10 minutes. This service supports up to 12 minutes.'),
-      ).not.toBeInTheDocument()
-    })
-
-    it('keeps the managed fallback explanation and hides meaningless custom entry', async () => {
-      mockAppStore.config.stt_provider = 'cloud'
-      mockAppStore.config.recording_limit_mode = 'custom'
-      mockAppStore.config.custom_recording_limit_seconds = 30
-      vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
-        capability: {
-          registryVersion: 1,
-          providerId: 'cloud',
-          transport: 'managedUpload',
-          recommendedMaxSeconds: 30,
-          hardMaxSeconds: 30,
-          maxUploadBytes: 4_000_000,
-          source: 'managedProduct',
-          explanationKey: 'recordingLimits.reasons.managedFallback',
-        },
-        mode: 'custom',
-        requestedSeconds: 30,
-        effectiveMaxSeconds: 30,
-      })
-
-      render(<SttPane />)
-
-      const duration = await screen.findByLabelText('Single recording duration')
-      expect(
-        within(duration).queryByRole('option', { name: 'Custom duration…' }),
-      ).not.toBeInTheDocument()
-      expect(screen.getByText('Safe Cloud fallback')).toBeInTheDocument()
-      expect(
-        screen.queryByText('Current: 30 seconds. Cloud supports up to 30 seconds.'),
-      ).not.toBeInTheDocument()
-    })
-
-    it('stores a preset as a custom duration from the single selector', async () => {
-      render(<SttPane />)
-      const duration = await screen.findByLabelText('Single recording duration')
-
-      fireEvent.change(duration, { target: { value: '300' } })
-
-      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({
-        recording_limit_mode: 'custom',
-        custom_recording_limit_seconds: 300,
-      })
-    })
-
-    it('shows 30 seconds for stale Cloud metadata and 10 minutes only for compatible v2', async () => {
-      mockAppStore.config.stt_provider = 'cloud'
-      vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
-        capability: {
-          registryVersion: 1,
-          providerId: 'cloud',
-          transport: 'managedUpload',
-          recommendedMaxSeconds: 30,
-          hardMaxSeconds: 30,
-          maxUploadBytes: 4_000_000,
-          source: 'managedProduct',
-          explanationKey: 'recordingLimits.reasons.managedFallback',
-        },
-        mode: 'auto',
-        requestedSeconds: 30,
-        effectiveMaxSeconds: 30,
-      })
-      render(<SttPane />)
-
-      expect(
-        await screen.findByRole('option', { name: /Auto \(recommended,.*30 seconds/i }),
-      ).toBeInTheDocument()
-      expect(screen.getByText('Safe Cloud fallback')).toBeInTheDocument()
-
-      cleanup()
-      vi.mocked(tauri.getSttRecordingCapability).mockResolvedValueOnce({
-        capability: {
-          registryVersion: 1,
-          providerId: 'cloud',
-          transport: 'managedUpload',
-          recommendedMaxSeconds: 600,
-          hardMaxSeconds: 600,
-          maxUploadBytes: 4_000_000,
-          source: 'managedProduct',
-          explanationKey: 'recordingLimits.reasons.managedCapability',
-        },
-        mode: 'auto',
-        requestedSeconds: 600,
-        effectiveMaxSeconds: 600,
-      })
-      render(<SttPane />)
-
-      expect(
-        await screen.findByRole('option', { name: /Auto \(recommended,.*10 minutes/i }),
-      ).toBeInTheDocument()
-      expect(screen.getByText('Set automatically for OpenTypeless Cloud.')).toBeInTheDocument()
-    })
-  })
-
-  describe('Cloud provider UI', () => {
-    it('shows cloud info when provider is cloud and user not signed in', () => {
-      mockAppStore.config.stt_provider = 'cloud'
-      render(<SttPane />)
-      expect(screen.getByText('Sign in to use cloud STT')).toBeInTheDocument()
-    })
-
-    it('shows upgrade hint when user is signed in but not pro', () => {
-      mockAppStore.config.stt_provider = 'cloud'
-      mockAuthStore.user = { id: '1', email: 'test@example.com' }
-      mockAuthStore.plan = 'free'
-
-      render(<SttPane />)
-      expect(screen.getByText('Upgrade to Pro to use cloud STT')).toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Upgrade' }))
-      expect(window.location.hash).toBe('#/upgrade')
-    })
-
-    it('shows active status when user is pro', () => {
-      mockAppStore.config.stt_provider = 'cloud'
-      mockAuthStore.user = { id: '1', email: 'test@example.com' }
-      mockAuthStore.plan = 'pro'
-
-      render(<SttPane />)
-      expect(screen.getByText('Cloud STT active')).toBeInTheDocument()
-    })
-
-    it('hides API key input when provider is cloud', () => {
-      mockAppStore.config.stt_provider = 'cloud'
-
-      const { container } = render(<SttPane />)
-      const inputs = container.querySelectorAll('input[placeholder="Enter API Key"]')
-      expect(inputs.length).toBe(0)
+      fireEvent.click(await screen.findByRole('button', { name: 'Authorize Speech Recognition' }))
+      await waitFor(() => expect(tauri.requestAppleSpeechAuthorization).toHaveBeenCalled())
     })
   })
 
@@ -784,6 +674,8 @@ describe('SttPane', () => {
           'custom-whisper',
           'http://localhost:8000/v1',
           'Systran/faster-whisper-large-v3',
+          undefined,
+          undefined,
         )
       })
       expect(screen.getByText('Local endpoint ready')).toBeInTheDocument()

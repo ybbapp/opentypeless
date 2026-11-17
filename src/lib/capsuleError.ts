@@ -112,3 +112,30 @@ export function capsuleErrorKeyFromPayload(payload: PipelineErrorPayload): Capsu
 
   return 'unknown'
 }
+
+function payloadDetails(payload: PipelineErrorPayload): string | undefined {
+  if (typeof payload !== 'string') {
+    const details = payload.details?.trim()
+    return details ? details : undefined
+  }
+
+  for (const prefix of ['Audio capture failed: ', 'STT connection failed: ']) {
+    if (payload.startsWith(prefix)) {
+      const details = payload.slice(prefix.length).trim()
+      return details ? details : undefined
+    }
+  }
+  return undefined
+}
+
+/** Keep the short capsule label, and append the underlying error when it helps diagnosis. */
+export function capsuleErrorDisplayText(payload: PipelineErrorPayload, shortLabel: string): string {
+  const key = capsuleErrorKeyFromPayload(payload)
+  if (key === 'audio_failed' || key === 'stt_connection_failed') {
+    const details = payloadDetails(payload)
+    if (details && details.toLowerCase() !== shortLabel.toLowerCase()) {
+      return `${shortLabel}: ${details}`
+    }
+  }
+  return shortLabel
+}

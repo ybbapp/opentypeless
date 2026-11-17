@@ -115,14 +115,6 @@ const mockAppStore = {
   lastContext: null as any,
 }
 
-const mockAuthStore = {
-  user: null as any,
-  plan: null as any,
-  source: 'free',
-  cloudWordsLimit: 0,
-  licenseStatus: null as any,
-}
-
 vi.mock('../../../stores/appStore', () => ({
   useAppStore: (selector: any) => {
     if (typeof selector === 'function') {
@@ -132,26 +124,8 @@ vi.mock('../../../stores/appStore', () => ({
   },
 }))
 
-vi.mock('../../../stores/authStore', () => ({
-  hasManagedCloudAccess: (state: typeof mockAuthStore) =>
-    state.licenseStatus !== 'refunded' &&
-    state.licenseStatus !== 'deactivated' &&
-    ((state.source === 'creem' && state.cloudWordsLimit > 0) ||
-      (state.source === 'appsumo' &&
-        state.cloudWordsLimit > 0 &&
-        state.licenseStatus === 'active') ||
-      state.plan === 'pro'),
-  useAuthStore: (selector: any) => {
-    if (typeof selector === 'function') {
-      return selector(mockAuthStore)
-    }
-    return mockAuthStore
-  },
-}))
-
 describe('LlmPane', () => {
   beforeEach(() => {
-    // Reset mock store state
     mockAppStore.config = {
       llm_provider: 'openai',
       llm_api_key: '',
@@ -174,11 +148,6 @@ describe('LlmPane', () => {
     mockAppStore.llmLatencyMs = null
     mockAppStore.llmModels = []
     mockAppStore.lastContext = null
-    mockAuthStore.user = null
-    mockAuthStore.plan = null
-    mockAuthStore.source = 'free'
-    mockAuthStore.cloudWordsLimit = 0
-    mockAuthStore.licenseStatus = null
 
     vi.clearAllMocks()
     vi.mocked(tauri.readCredential).mockResolvedValue(null)
@@ -232,48 +201,12 @@ describe('LlmPane', () => {
     })
   })
 
-  describe('Cloud provider UI', () => {
+  describe('Ask Anything placement', () => {
     it('keeps Ask Anything out of AI Polish settings', () => {
       render(<LlmPane />)
 
       expect(screen.queryByText('Ask Anything')).not.toBeInTheDocument()
       expect(screen.queryByText('Voice question')).not.toBeInTheDocument()
-    })
-
-    it('shows cloud info when provider is cloud and user not signed in', () => {
-      mockAppStore.config.llm_provider = 'cloud'
-      render(<LlmPane />)
-      expect(screen.getByText('Cloud LLM (Pro)')).toBeInTheDocument()
-      expect(
-        screen.getByText('Sign in and subscribe to Pro to use cloud AI polish. No API key needed.'),
-      ).toBeInTheDocument()
-    })
-
-    it('shows upgrade hint when user is signed in but not pro', () => {
-      mockAppStore.config.llm_provider = 'cloud'
-      mockAuthStore.user = { id: '1', email: 'test@example.com' }
-      mockAuthStore.plan = 'free'
-
-      render(<LlmPane />)
-      expect(screen.getByText('Cloud LLM (Pro)')).toBeInTheDocument()
-      expect(
-        screen.getByText(
-          'Upgrade to Pro for cloud AI polish and monthly usage. No API key needed.',
-        ),
-      ).toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Upgrade' }))
-      expect(window.location.hash).toBe('#/upgrade')
-    })
-
-    it('shows active status when user is pro', () => {
-      mockAppStore.config.llm_provider = 'cloud'
-      mockAuthStore.user = { id: '1', email: 'test@example.com' }
-      mockAuthStore.plan = 'pro'
-
-      render(<LlmPane />)
-      expect(
-        screen.getByText('Pro active — cloud AI polish is ready. No API key needed.'),
-      ).toBeInTheDocument()
     })
   })
 

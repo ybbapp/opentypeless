@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isMacPlatform, useAppStore } from '../../stores/appStore'
-import { hasManagedCloudAccess, useAuthStore } from '../../stores/authStore'
 import {
   STT_PROVIDERS,
   LANGUAGES,
   APPLE_SPEECH_PROVIDER,
+  APPLE_SPEECH_PRIVACY_SETTINGS_URL,
   CUSTOM_WHISPER_PROVIDER,
+  MICROPHONE_PRIVACY_SETTINGS_URL,
   CUSTOM_STT_DEFAULTS,
   CUSTOM_STT_PRESETS,
   VOLCENGINE_STT_RESOURCES,
@@ -18,10 +19,13 @@ import {
   readCredential,
   setCredential,
   type ResolvedSttRecordingLimit,
+  getAppleSpeechAvailability,
+  requestAppleSpeechAuthorization,
+  type AppleSpeechAvailability,
   type SttProviderDiagnostics,
 } from '../../lib/tauri'
 import { FormField } from './shared/FormField'
-import { CheckCircle2, XCircle, Loader2, Crown } from 'lucide-react'
+import { CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 
 const RECORDING_LIMIT_PRESETS = [30, 60, 120, 300, 600, 1800, 3600]
 const MIN_CUSTOM_RECORDING_SECONDS = 30
@@ -45,15 +49,12 @@ export function SttPane() {
   const sttLatencyMs = useAppStore((s) => s.sttLatencyMs)
   const setSttLatencyMs = useAppStore((s) => s.setSttLatencyMs)
   const platformCapabilities = useAppStore((s) => s.platformCapabilities)
-  const { user } = useAuthStore()
-  const hasCloudAccess = useAuthStore(hasManagedCloudAccess)
   const { t } = useTranslation()
   const [testErrorMessage, setTestErrorMessage] = useState<string | null>(null)
   const [credentialErrorMessage, setCredentialErrorMessage] = useState<string | null>(null)
   const [recordingLimit, setRecordingLimit] = useState<ResolvedSttRecordingLimit | null>(null)
   const [customDurationEntryRequested, setCustomDurationEntryRequested] = useState(false)
 
-  const isCloud = config.stt_provider === 'cloud'
   const isAppleSpeech = config.stt_provider === APPLE_SPEECH_PROVIDER
   const isCustomWhisper = config.stt_provider === CUSTOM_WHISPER_PROVIDER
   const isVolcengineDoubao = config.stt_provider === 'volcengine-doubao'
@@ -73,17 +74,17 @@ export function SttPane() {
   )
   const appleSpeechReady = sttDiagnostics?.ready === true
   const appleSpeechUnavailable = sttDiagnostics?.ready === false
+  const appleIssue = sttDiagnostics?.issues[0]
   const canTest = isAppleSpeech
-    ? appleSpeechReady
+    ? supportsAppleSpeech
     : isCustomWhisper
       ? Boolean(config.stt_custom_base_url.trim() && config.stt_custom_model.trim())
       : Boolean(apiKeyDraft)
-  const goUpgrade = () => {
-    window.location.hash = '#/upgrade'
-  }
+  const [appleAvailability, setAppleAvailability] = useState<AppleSpeechAvailability | null>(null)
+  const [appleBusy, setAppleBusy] = useState(false)
 
   useEffect(() => {
-    if (isCloud || isAppleSpeech) {
+    if (isAppleSpeech) {
       setApiKeyDraft('')
       setCredentialErrorMessage(null)
       return
@@ -101,7 +102,7 @@ export function SttPane() {
     return () => {
       cancelled = true
     }
-  }, [credentialProvider, isAppleSpeech, isCloud, legacyApiKey])
+  }, [credentialProvider, isAppleSpeech, legacyApiKey])
 
   useEffect(() => {
     if (!isCustomWhisper && !isAppleSpeech) {
@@ -115,6 +116,8 @@ export function SttPane() {
       config.stt_provider,
       isCustomWhisper ? config.stt_custom_base_url : undefined,
       isCustomWhisper ? config.stt_custom_model : undefined,
+      undefined,
+      isAppleSpeech ? config.stt_language : undefined,
     )
       .then((diagnostics) => {
         if (!cancelled) setSttDiagnostics(diagnostics)
@@ -134,7 +137,27 @@ export function SttPane() {
     config.stt_provider,
     isAppleSpeech,
     isCustomWhisper,
+    config.stt_language,
   ])
+
+  const refreshAppleAvailability = async () => {
+    if (!isAppleSpeech) return
+    try {
+      const availability = await getAppleSpeechAvailability(config.stt_language)
+      setAppleAvailability(availability)
+    } catch (error) {
+      console.error('[apple-speech] failed to read availability', error)
+    }
+  }
+
+  useEffect(() => {
+    if (!isAppleSpeech) {
+      setAppleAvailability(null)
+      return
+    }
+    void refreshAppleAvailability()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAppleSpeech, config.stt_language])
 
   useEffect(() => {
     let cancelled = false
@@ -174,7 +197,7 @@ export function SttPane() {
 
   const persistSttCredential = useCallback(
     (value: string, delayMs = 350) => {
-      if (isCloud || isAppleSpeech) return
+      if (isAppleSpeech) return
       if (credentialSaveRef.current) clearTimeout(credentialSaveRef.current)
       credentialSaveRef.current = setTimeout(() => {
         credentialSaveRef.current = null
@@ -187,7 +210,7 @@ export function SttPane() {
           })
       }, delayMs)
     },
-    [credentialProvider, isAppleSpeech, isCloud],
+    [credentialProvider, isAppleSpeech],
   )
 
   const handleTest = async () => {
@@ -230,6 +253,31 @@ export function SttPane() {
       console.error('[STT Test] Error:', err)
       setTestErrorMessage(err instanceof Error ? err.message : typeof err === 'string' ? err : null)
       setSttTestStatus('error')
+    } finally {
+      if (isAppleSpeech) await refreshAppleAvailability()
+    }
+  }
+
+  const handleAuthorizeAppleSpeech = async () => {
+    setAppleBusy(true)
+    setTestErrorMessage(null)
+    try {
+      await requestAppleSpeechAuthorization()
+      await refreshAppleAvailability()
+    } catch (error) {
+      setTestErrorMessage(error instanceof Error ? error.message : String(error))
+      await refreshAppleAvailability()
+    } finally {
+      setAppleBusy(false)
+    }
+  }
+
+  const openPrivacySettings = async (url: string) => {
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(url)
+    } catch (error) {
+      console.error('[apple-speech] failed to open privacy settings', error)
     }
   }
 
@@ -353,66 +401,88 @@ export function SttPane() {
         </select>
       </FormField>
 
-      {isCloud ? (
-        <div className="border border-border rounded-[10px] px-3 py-3 space-y-2">
-          <div className="flex items-center gap-2 text-[13px]">
-            <Crown size={14} className="text-accent" />
-            <span className="text-text-primary font-medium">{t('settings.cloudSttPro')}</span>
-          </div>
-          {!user ? (
-            <p className="text-[12px] text-text-secondary">{t('settings.sttSignInHint')}</p>
-          ) : !hasCloudAccess ? (
-            <div className="space-y-2">
-              <p className="text-[12px] text-text-secondary">{t('settings.sttUpgradeHint')}</p>
-              <button
-                type="button"
-                onClick={goUpgrade}
-                className="rounded-[8px] border border-accent bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:bg-accent-hover"
-              >
-                {t('nav.upgrade')}
-              </button>
-            </div>
-          ) : (
-            <p className="text-[12px] text-green-500">{t('settings.sttProActive')}</p>
-          )}
-        </div>
-      ) : isAppleSpeech ? (
+      {isAppleSpeech ? (
         <FormField label={t('providers.stt.appleSpeech')}>
-          <div className="flex gap-2">
-            <div className="flex-1 px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary">
-              <p
-                className={`flex items-center gap-1.5 ${
-                  appleSpeechReady
-                    ? 'text-success'
-                    : appleSpeechUnavailable
-                      ? 'text-text-tertiary'
-                      : 'text-text-secondary'
-                }`}
-              >
-                {appleSpeechReady ? (
-                  <CheckCircle2 size={13} className="flex-shrink-0" />
-                ) : appleSpeechUnavailable ? (
-                  <XCircle size={13} className="flex-shrink-0" />
-                ) : (
-                  <Loader2 size={13} className="flex-shrink-0 animate-spin" />
-                )}
-                <span>
-                  {appleSpeechReady
-                    ? t('settings.appleSpeechReady')
+          <div className="space-y-2">
+            <p
+              className={`flex items-center gap-1.5 text-[13px] ${
+                appleSpeechReady
+                  ? 'text-success'
+                  : appleSpeechUnavailable
+                    ? 'text-text-secondary'
+                    : 'text-text-secondary'
+              }`}
+            >
+              {appleSpeechReady ? (
+                <CheckCircle2 size={13} className="flex-shrink-0" />
+              ) : appleSpeechUnavailable ? (
+                <XCircle size={13} className="flex-shrink-0" />
+              ) : (
+                <Loader2 size={13} className="flex-shrink-0 animate-spin" />
+              )}
+              <span>
+                {appleSpeechReady
+                  ? t('settings.appleSpeechReady')
+                  : appleIssue
+                    ? appleIssue.message
                     : appleSpeechUnavailable
                       ? t('settings.appleSpeechUnavailable')
                       : t('settings.healthChecking')}
-                </span>
+              </span>
+            </p>
+            {appleAvailability?.supportsOnDeviceRecognition === true && (
+              <p className="text-[12px] text-text-tertiary">
+                {t('settings.appleSpeechOnDeviceYes')}
               </p>
+            )}
+            {appleAvailability?.supportsOnDeviceRecognition === false && (
+              <p className="text-[12px] text-text-tertiary">
+                {t('settings.appleSpeechOnDeviceNo')}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleAuthorizeAppleSpeech}
+                disabled={appleBusy || !supportsAppleSpeech}
+                className="px-4 py-2.5 bg-accent text-white rounded-[10px] text-[13px] border-none cursor-pointer hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+              >
+                {appleBusy && <Loader2 size={14} className="animate-spin" />}
+                {t('settings.appleSpeechAuthorize')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void refreshAppleAvailability()}
+                className="px-4 py-2.5 rounded-[10px] text-[13px] border border-border bg-bg-secondary cursor-pointer"
+              >
+                {t('settings.appleSpeechRecheck')}
+              </button>
+              <button
+                type="button"
+                onClick={handleTest}
+                disabled={!canTest || sttTestStatus === 'testing'}
+                className="px-4 py-2.5 rounded-[10px] text-[13px] border border-border bg-bg-secondary cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+              >
+                {sttTestStatus === 'testing' && <Loader2 size={14} className="animate-spin" />}
+                {t('settings.test')}
+              </button>
             </div>
-            <button
-              onClick={handleTest}
-              disabled={!canTest || sttTestStatus === 'testing'}
-              className="px-4 py-2.5 bg-accent text-white rounded-[10px] text-[13px] border-none cursor-pointer hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
-            >
-              {sttTestStatus === 'testing' && <Loader2 size={14} className="animate-spin" />}
-              {t('settings.test')}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void openPrivacySettings(MICROPHONE_PRIVACY_SETTINGS_URL)}
+                className="text-[12px] text-accent bg-transparent border-none cursor-pointer hover:underline"
+              >
+                {t('settings.openMicrophoneSettings')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void openPrivacySettings(APPLE_SPEECH_PRIVACY_SETTINGS_URL)}
+                className="text-[12px] text-accent bg-transparent border-none cursor-pointer hover:underline"
+              >
+                {t('settings.openSpeechSettings')}
+              </button>
+            </div>
           </div>
           {sttTestStatus === 'success' && (
             <p className="flex items-center gap-1 text-[12px] text-success mt-2">

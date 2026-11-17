@@ -128,13 +128,12 @@ export async function saveOnboardingConfig(config: AppConfig): Promise<AppConfig
     await setCredential('stt', 'custom-whisper', config.stt_custom_api_key)
   } else if (
     config.stt_api_key?.trim() &&
-    config.stt_provider !== 'cloud' &&
     config.stt_provider !== 'custom-whisper' &&
     config.stt_provider !== 'apple-speech'
   ) {
     await setCredential('stt', config.stt_provider, config.stt_api_key)
   }
-  if (config.llm_api_key?.trim() && config.llm_provider !== 'cloud') {
+  if (config.llm_api_key?.trim()) {
     await setCredential('llm', config.llm_provider, config.llm_api_key)
   }
   const sanitized = configWithoutProviderSecrets(config)
@@ -320,7 +319,7 @@ export interface SttProviderDiagnosticIssue {
 
 export interface SttProviderDiagnostics {
   provider: string
-  kind: 'localCompatible' | 'builtinLocal' | 'byokRemote' | 'cloudManaged' | 'unknown'
+  kind: 'localCompatible' | 'builtinLocal' | 'byokRemote' | 'unknown'
   endpoint: string | null
   model: string | null
   requiresApiKey: boolean
@@ -329,12 +328,32 @@ export interface SttProviderDiagnostics {
   issues: SttProviderDiagnosticIssue[]
 }
 
+export type AppleSpeechAuthorizationStatus =
+  | 'unsupported'
+  | 'notDetermined'
+  | 'denied'
+  | 'restricted'
+  | 'authorized'
+  | 'unknown'
+
+export interface AppleSpeechAvailability {
+  platformSupported: boolean
+  authorizationStatus: AppleSpeechAuthorizationStatus
+  locale: string | null
+  recognizerAvailable: boolean | null
+  ready: boolean
+  issueCode: string | null
+  issueMessage: string | null
+  supportsOnDeviceRecognition: boolean | null
+}
+
 export async function getSttProviderDiagnostics(
   apiKey: string,
   provider: string,
   customBaseUrl?: string,
   customModel?: string,
   providerRegion?: string,
+  language?: string,
 ): Promise<SttProviderDiagnostics> {
   return invoke('get_stt_provider_diagnostics', {
     apiKey,
@@ -342,7 +361,18 @@ export async function getSttProviderDiagnostics(
     customBaseUrl,
     customModel,
     providerRegion,
+    language,
   })
+}
+
+export async function getAppleSpeechAvailability(
+  language?: string,
+): Promise<AppleSpeechAvailability> {
+  return invoke('get_apple_speech_availability', { language })
+}
+
+export async function requestAppleSpeechAuthorization(): Promise<AppleSpeechAuthorizationStatus> {
+  return invoke('request_apple_speech_authorization')
 }
 
 // Connection test

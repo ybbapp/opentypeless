@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { capsuleErrorKeyFromPayload } from '../capsuleError'
+import { capsuleErrorDisplayText, capsuleErrorKeyFromPayload } from '../capsuleError'
 
 describe('capsuleErrorKeyFromPayload', () => {
   it('keeps structured STT quota errors short', () => {
@@ -75,5 +75,14 @@ describe('capsuleErrorKeyFromPayload', () => {
         retry_count: 0,
       }),
     ).toBe('unknown')
+  })
+
+  it('appends the underlying audio capture error to the short label', () => {
+    expect(
+      capsuleErrorDisplayText(
+        { code: 'audio_failed', details: 'Device not available', retry_count: 0 },
+        'Mic failed',
+      ),
+    ).toBe('Mic failed: Device not available')
   })
 })

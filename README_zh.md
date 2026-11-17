@@ -233,51 +233,34 @@ npm run tauri build
 
 所有设置均可在应用内的设置面板中访问：
 
-- **语音识别** — 选择 STT 服务商并输入 API 密钥
-- **AI 润色** — 选择 LLM 服务商、模型、API 密钥、润色风格、自定义提示词、翻译和选中文本上下文
+- **语音识别** — 选择 STT 服务商；macOS 可使用无需 API 密钥的 Apple Speech，或其他自备密钥/本地服务
+- **AI 润色** — 可选。选择你自己的 LLM 服务商或本地模型；也可以关闭润色，只输出听写原文
 - **通用** — 听写热键、Ask 热键、输出模式、开机自启和胶囊空闲隐藏
 - **词典** — 添加自定义术语和本地纠错规则
 - **场景** — 内置/本地提示词模板，支持导入导出
-- **账户 / Upgrade** — 登录、查看 cloud words、管理 Pro 或 Lifetime Starter 权益
 
-API 密钥会优先存入系统密钥库，不支持时使用本地 fallback。BYOK 密钥不会发送到 OpenTypeless 服务器 — 所有 STT/LLM 请求直接发送到你配置的服务商。
+API 密钥会优先存入系统密钥库，不支持时使用本地 fallback。自备密钥不会发送到 OpenTypeless 官方服务器 — 所有 STT/LLM 请求直接发送到你配置的服务商。本 fork 已去掉官方会员、升级和付费云入口，不会调用官方付费代理。
 
-### Cloud 选项
+### 纯听写（不润色）
 
-OpenTypeless 还提供可选的托管云端能力，这样你不需要自己配置 STT/LLM API key。Pro 和 Lifetime Starter 包含共享的 cloud words，可用于语音识别、AI 润色和 Ask Anything。BYOK 仍然完整支持。
+默认不强制开启 AI 润色。在设置的「AI 润色」中关闭开关，或在首次引导时跳过 LLM 配置，即可只把转写原文插入当前应用。草稿、翻译、改写等需要模型的命令，在未配置可用 LLM 时不会执行。
 
-[了解更多关于 Pro 的信息](https://www.opentypeless.com)
+### 在 macOS 上使用 Apple Speech（本地）
 
-### BYOK（自备密钥）vs Cloud
+1. 安装并打开本应用。首次引导在 Mac 上会把 Apple Speech 作为可选（并优先）的语音识别方式，不需要 API 密钥。
+2. 分别授权两项系统权限，它们不是一回事：
+   - **麦克风**：系统设置 → 隐私与安全性 → 麦克风，打开 OpenTypeless。
+   - **语音识别**：系统设置 → 隐私与安全性 → 语音识别，打开 OpenTypeless。设置里的「授权语音识别」会触发系统弹窗；若按钮曾因未就绪被禁用，这一版已修好，未授权时也可以点「授权」或「测试」。授权后点「重新检查」。
+3. 如果提示「麦克风失败」，先确认输入设备可用且未静音。胶囊现在会尽量附带底层采集错误，便于判断是权限、设备还是其他问题。系统里已经打开麦克风权限，并不等于采集一定成功。
+4. 语言与模型由 macOS 的 Speech 框架决定。若当前语言不可用，设置里会显示诊断原因。单次录音上限约为 60 秒。
+5. **完全离线并非始终成立。** 应用仅在识别器报告 `supportsOnDeviceRecognition` 时设置 `requiresOnDeviceRecognition`。若不支持设备端识别，Apple Speech 可能把音频发送到 Apple 服务器。设置页会显示当前是否支持设备端识别。
+6. 只要关闭 AI 润色（或不配置 LLM），听写结果会直接输出，无需付费或官方云。
 
-| | BYOK 模式 | Cloud 模式 |
-|---|---|---|
-| STT | 自己的 API 密钥或本地端点 | 托管 cloud words |
-| LLM | 自己的 API 密钥或本地端点 | 托管 cloud words |
-| 云依赖 | 无 — 所有请求直接发送到你的服务商 | 需要连接 www.opentypeless.com |
-| 费用 | 直接向服务商付费 | 可选 Pro 或 Lifetime Starter |
+### 自托管 / 无官方云依赖
 
-所有核心功能 — 录音、转录、AI 润色、键盘/剪贴板输出、词典、历史记录 — 在 BYOK 模式下完全不依赖 OpenTypeless 服务器。
-
-### 自托管 / 无云依赖
-
-无需任何云依赖即可运行 OpenTypeless：
-
-1. 在设置中选择任意非 Cloud 的 STT 和 LLM 服务商
-2. 输入你自己的 API 密钥
-3. 完成 — 无需账户或连接 www.opentypeless.com
-
-如果你想将可选的云功能指向自己的后端，在构建前设置以下环境变量：
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `VITE_API_BASE_URL` | `https://www.opentypeless.com` | 前端云 API 基础 URL |
-| `API_BASE_URL` | `https://www.opentypeless.com` | Rust 后端云 API 基础 URL |
-
-```bash
-# 示例：使用自定义后端构建
-VITE_API_BASE_URL=https://my-server.example.com API_BASE_URL=https://my-server.example.com npm run tauri build
-```
+1. 在设置中选择 Apple Speech、本地 Whisper 兼容服务，或其他自备密钥的 STT/LLM 服务商
+2. 如需润色，输入你自己的 API 密钥或使用 Ollama 等本地模型；否则保持润色关闭
+3. 完成 — 无需官方账户或连接 www.opentypeless.com
 
 ## 架构
 
@@ -293,8 +276,8 @@ flowchart TB
   Pipeline --> LLMs["LLM 服务商"]
   Pipeline --> Storage["SQLite 历史记录 + 词典"]
   Pipeline --> Output["键盘 / 剪贴板输出"]
-  Account["账户 + 更新 + 云端额度"] --> UI
-  Account --> Tauri
+  Update["应用更新"] --> UI
+  Update --> Tauri
 ```
 
 ```
@@ -335,7 +318,7 @@ src-tauri/src/        # Rust 后端
 STT 根据服务商不同支持 99+ 种语言。AI 润色和翻译支持 20+ 种目标语言。
 
 **应用免费吗？**
-是的。使用自己的 API 密钥（BYOK）即可完整使用所有功能。Cloud 计划是可选的。
+是的。使用自己的 API 密钥、本地模型或 macOS 上的 Apple Speech 即可使用。本 fork 不含官方付费云计划。
 
 ## 社区
 

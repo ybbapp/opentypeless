@@ -1,10 +1,7 @@
+#![allow(dead_code)]
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
-
-use crate::error::{managed_cloud_error, AppError};
-use crate::with_desktop_client_version;
 
 use super::managed_audio::{
     encode_pcm_to_ogg_opus, select_managed_payload, ManagedAudioEncoderWorker,
@@ -12,6 +9,7 @@ use super::managed_audio::{
 };
 use super::whisper_compat::WhisperCompatProvider;
 use super::{SttConfig, SttProvider, TranscriptEvent};
+use crate::error::AppError;
 
 /// Cloud STT provider that proxies audio through the talkmore-web API.
 /// Auth token is passed via the api_key field. Quota is enforced server-side.
@@ -82,47 +80,8 @@ fn managed_intent_warmup_gate() -> &'static Mutex<ManagedIntentWarmupGate> {
 
 /// Wake the managed account/quota compute only for real Cloud use. This is
 /// deliberately detached from audio readiness and recording finalization.
-pub fn warm_managed_cloud_on_intent(client: reqwest::Client, session_token: String) {
-    if session_token.trim().is_empty() {
-        return;
-    }
-    let mut token_hasher = std::collections::hash_map::DefaultHasher::new();
-    session_token.hash(&mut token_hasher);
-    let session_key = token_hasher.finish();
-    let should_start = managed_intent_warmup_gate()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .try_begin(session_key, std::time::Instant::now());
-    if !should_start {
-        tracing::debug!("Managed Cloud intent warm-up skipped (recent or already running)");
-        return;
-    }
-
-    tokio::spawn(async move {
-        let result = with_desktop_client_version(
-            client.get(format!("{}/api/subscription/status", crate::api_base_url())),
-        )
-        .header("Authorization", format!("Bearer {session_token}"))
-        .timeout(MANAGED_INTENT_WARMUP_TIMEOUT)
-        .send()
-        .await;
-        match result {
-            Ok(response) => {
-                let status = response.status();
-                let _ = response.bytes().await;
-                tracing::debug!(%status, "Managed Cloud intent warm-up completed");
-            }
-            Err(error) => {
-                tracing::debug!(
-                    "Managed Cloud intent warm-up failed without blocking capture: {error}"
-                );
-            }
-        }
-        managed_intent_warmup_gate()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .finish(session_key);
-    });
+pub fn warm_managed_cloud_on_intent(_client: reqwest::Client, _session_token: String) {
+    tracing::debug!("Official managed Cloud warm-up is disabled in this fork");
 }
 
 struct CloudAudioPayload {
@@ -326,193 +285,28 @@ async fn encode_managed_audio_fallback(
 
 #[async_trait]
 impl SttProvider for CloudSttProvider {
-    async fn connect(&mut self, config: &SttConfig) -> Result<(), AppError> {
-        if config.api_key.is_empty() {
-            return Err(AppError::Auth(
-                "Cloud STT: session token is missing. Please sign in first.".to_string(),
-            ));
-        }
-        self.stt_config = Some(config.clone());
-        self.audio_buffer.clear();
-        self.managed_audio_worker.take();
-        self.managed_audio_failed = false;
-        if let Some(managed_config) = config.managed_audio {
-            if config.sample_rate != 16_000 {
-                tracing::warn!(
-                    sample_rate = config.sample_rate,
-                    "Managed Opus requires 16 kHz input; retaining the safe WAV fallback"
-                );
-                self.managed_audio_failed = true;
-            } else {
-                match ManagedAudioEncoderWorker::start(
-                    stream_serial(config.operation_id.as_deref()),
-                    managed_config,
-                ) {
-                    Ok(worker) => self.managed_audio_worker = Some(worker),
-                    Err(error) => {
-                        tracing::warn!(
-                            code = error.code,
-                            "Managed Opus initialization failed; retaining the safe WAV fallback: {}",
-                            error
-                        );
-                        self.managed_audio_failed = true;
-                    }
-                }
-            }
-        }
-        tracing::info!("Cloud STT provider ready (buffering mode)");
-        Ok(())
+    async fn connect(&mut self, _config: &SttConfig) -> Result<(), AppError> {
+        Err(AppError::Config(
+            crate::official_managed_cloud_removed_error(),
+        ))
     }
 
-    async fn send_audio(&mut self, chunk: &[u8]) -> Result<(), AppError> {
-        if self.audio_buffer.len() + chunk.len() > MAX_AUDIO_BYTES {
-            return Err(AppError::Config(
-                "Cloud STT: audio exceeds maximum length (~12 min)".to_string(),
-            ));
-        }
-        self.audio_buffer.extend_from_slice(chunk);
-        if let Some(worker) = self.managed_audio_worker.as_ref() {
-            if let Err(error) = worker.try_send_pcm(chunk) {
-                tracing::warn!(
-                    code = error.code,
-                    "Managed Opus worker fell behind; retaining PCM for one stop-time retry: {}",
-                    error
-                );
-                self.managed_audio_failed = true;
-                self.managed_audio_worker.take();
-            }
-        }
-        Ok(())
+    async fn send_audio(&mut self, _chunk: &[u8]) -> Result<(), AppError> {
+        Err(AppError::Config(
+            crate::official_managed_cloud_removed_error(),
+        ))
     }
 
     async fn recv_transcript(&mut self) -> Result<Option<TranscriptEvent>, AppError> {
-        // Cloud STT is file-upload based and returns the final transcript from
-        // disconnect(); keep this future pending so the pipeline select loop
-        // waits for audio chunks instead of busy-spinning while recording.
+        // Official Cloud STT is disabled; keep this future pending so leftover
+        // callers cannot busy-spin if they still construct the provider.
         std::future::pending().await
     }
 
     async fn disconnect(&mut self) -> Result<Option<String>, AppError> {
-        let config = match &self.stt_config {
-            Some(c) => c.clone(),
-            None => return Ok(None),
-        };
-
-        if self.audio_buffer.is_empty() {
-            self.managed_audio_worker.take();
-            tracing::info!("Cloud STT: no audio buffered, skipping");
-            return Ok(None);
-        }
-
-        let pcm = std::mem::take(&mut self.audio_buffer);
-        let audio_len_secs = pcm.len() as f64 / (config.sample_rate as f64 * 2.0);
-        let payload = self.build_payload(pcm, &config).await?;
-        let request_timeout = crate::cloud_request::stt_timeout(payload.bytes.len());
-        tracing::info!(
-            "Cloud STT: sending {:.1}s of audio for transcription as {} ({} bytes)",
-            audio_len_secs,
-            payload.mime_type,
-            payload.bytes.len()
-        );
-
-        let request = async {
-            let mut attempt = 0u32;
-            loop {
-                let file_part = reqwest::multipart::Part::bytes(payload.bytes.clone())
-                    .file_name(payload.file_name)
-                    .mime_str(payload.mime_type)
-                    .map_err(|e| AppError::Config(e.to_string()))?;
-
-                let mut form = reqwest::multipart::Form::new().part("audio", file_part);
-
-                if let Some(ref lang) = config.language {
-                    form = form.text("language", lang.clone());
-                }
-                if let Some(operation_id) = config.operation_id.as_deref() {
-                    form = form
-                        .text("operationId", operation_id.to_string())
-                        .text("stageKey", format!("{operation_id}:stt"))
-                        .text("requestType", "voice_pipeline")
-                        .text("clientVersion", crate::desktop_client_version());
-                }
-
-                let resp_result = with_desktop_client_version(
-                    self.client
-                        .post(format!("{}/api/proxy/stt", self.api_base_url)),
-                )
-                .header("Authorization", format!("Bearer {}", config.api_key))
-                .multipart(form)
-                .timeout(request_timeout)
-                .send()
-                .await;
-
-                match resp_result {
-                    Ok(resp) => {
-                        let status = resp.status();
-                        let body = resp.text().await?;
-
-                        if status.is_success() {
-                            let v: serde_json::Value = serde_json::from_str(&body)
-                                .map_err(|e| AppError::Config(e.to_string()))?;
-                            let text = v["text"].as_str().unwrap_or("").trim().to_string();
-
-                            tracing::info!("Cloud STT transcription: {} chars", text.len());
-
-                            return Ok(if text.is_empty() { None } else { Some(text) });
-                        } else if let Some(error) = managed_cloud_error(status.as_u16(), &body) {
-                            return Err(error);
-                        } else if status.as_u16() == 403 {
-                            return Err(cloud_stt_forbidden_error(&body));
-                        } else if status.as_u16() >= 500 && attempt < 2 {
-                            let truncate_at = body
-                                .char_indices()
-                                .take_while(|&(i, _)| i < 200)
-                                .last()
-                                .map(|(i, c)| i + c.len_utf8())
-                                .unwrap_or(body.len());
-                            tracing::warn!(
-                                "Cloud STT server error {} (attempt {}/3): {}",
-                                status,
-                                attempt + 1,
-                                &body[..truncate_at]
-                            );
-                            attempt += 1;
-                            tokio::time::sleep(std::time::Duration::from_millis(
-                                1000 * 2u64.pow(attempt - 1),
-                            ))
-                            .await;
-                            continue;
-                        } else {
-                            let truncate_at = body
-                                .char_indices()
-                                .take_while(|&(i, _)| i < 200)
-                                .last()
-                                .map(|(i, c)| i + c.len_utf8())
-                                .unwrap_or(body.len());
-                            let sanitized = &body[..truncate_at];
-                            tracing::error!("Cloud STT HTTP {}: {}", status, sanitized);
-                            return Err(AppError::Api {
-                                status: status.as_u16(),
-                                body: sanitized.to_string(),
-                            });
-                        }
-                    }
-                    Err(e) if e.is_timeout() && attempt < 2 => {
-                        tracing::warn!("Cloud STT timeout (attempt {}/3)", attempt + 1);
-                        attempt += 1;
-                        tokio::time::sleep(std::time::Duration::from_millis(
-                            1000 * 2u64.pow(attempt - 1),
-                        ))
-                        .await;
-                        continue;
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            }
-        };
-        tokio::time::timeout(request_timeout, request)
-            .await
-            .unwrap_or(Err(AppError::Timeout(request_timeout)))
+        Err(AppError::Config(
+            crate::official_managed_cloud_removed_error(),
+        ))
     }
 
     fn name(&self) -> &str {
@@ -576,33 +370,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn managed_payload_keeps_short_audio_as_exact_historical_wav() {
+    async fn official_cloud_stt_methods_are_disabled() {
         let config = stt_config();
-        let pcm = vec![0; 32_000];
-        let historical = WhisperCompatProvider::build_wav(&pcm, 16_000);
         let mut provider = CloudSttProvider::new("https://example.test".to_string());
-        provider.connect(&config).await.unwrap();
-        provider.send_audio(&pcm).await.unwrap();
-
-        let payload = provider.build_payload(pcm, &config).await.unwrap();
-        assert_eq!(payload.file_name, "audio.wav");
-        assert_eq!(payload.mime_type, "audio/wav");
-        assert_eq!(payload.bytes, historical);
-    }
-
-    #[tokio::test]
-    async fn managed_payload_uses_bounded_ogg_opus_above_the_wav_threshold() {
-        let config = stt_config();
-        let pcm = vec![0; 3_500_000];
-        let mut provider = CloudSttProvider::new("https://example.test".to_string());
-        provider.connect(&config).await.unwrap();
-        provider.send_audio(&pcm).await.unwrap();
-
-        let payload = provider.build_payload(pcm, &config).await.unwrap();
-        assert_eq!(payload.file_name, "audio.ogg");
-        assert_eq!(payload.mime_type, "audio/ogg; codecs=opus");
-        assert!(payload.bytes.starts_with(b"OggS"));
-        assert!(payload.bytes.len() <= managed_config().max_audio_bytes as usize);
+        let message = crate::official_managed_cloud_removed_error();
+        let connect = provider.connect(&config).await.unwrap_err();
+        assert!(connect.to_string().contains(&message));
+        let send = provider.send_audio(&[0; 32]).await.unwrap_err();
+        assert!(send.to_string().contains(&message));
+        let disconnect = provider.disconnect().await.unwrap_err();
+        assert!(disconnect.to_string().contains(&message));
     }
 
     #[test]

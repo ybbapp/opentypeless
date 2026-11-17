@@ -14,6 +14,10 @@ pub struct AppleSpeechAvailability {
     pub ready: bool,
     pub issue_code: Option<String>,
     pub issue_message: Option<String>,
+    /// True only when the recognizer reports `supportsOnDeviceRecognition`.
+    /// This app sets `requiresOnDeviceRecognition` only in that case; otherwise
+    /// Apple Speech may fall back to Apple servers.
+    pub supports_on_device_recognition: Option<bool>,
 }
 
 impl AppleSpeechAvailability {
@@ -22,6 +26,7 @@ impl AppleSpeechAvailability {
         authorization_status: AppleSpeechAuthorizationStatus,
         locale: Option<String>,
         recognizer_available: Option<bool>,
+        supports_on_device_recognition: Option<bool>,
     ) -> Self {
         let (ready, issue_code, issue_message) = if !platform_supported {
             (
@@ -84,6 +89,7 @@ impl AppleSpeechAvailability {
             ready,
             issue_code,
             issue_message,
+            supports_on_device_recognition,
         }
     }
 }
@@ -209,12 +215,14 @@ mod platform {
             } else {
                 None
             };
+        let supports_on_device_recognition = supports_on_device_recognition(locale.as_deref()).ok();
 
         AppleSpeechAvailability::from_parts(
             true,
             authorization_status,
             locale,
             recognizer_available,
+            supports_on_device_recognition,
         )
     }
 
@@ -349,6 +357,12 @@ mod platform {
         let recognizer = create_recognizer(locale)?;
         let available: Bool = unsafe { msg_send![recognizer, isAvailable] };
         Ok(available.as_bool())
+    }
+
+    fn supports_on_device_recognition(locale: Option<&str>) -> Result<bool> {
+        let recognizer = create_recognizer(locale)?;
+        let supports: Bool = unsafe { msg_send![recognizer, supportsOnDeviceRecognition] };
+        Ok(supports.as_bool())
     }
 
     fn configure_on_device(recognizer: *mut AnyObject, request: *mut AnyObject) {
@@ -604,6 +618,7 @@ mod platform {
             AppleSpeechAuthorizationStatus::Unsupported,
             None,
             None,
+            None,
         )
     }
 
@@ -653,6 +668,7 @@ mod availability_tests {
             AppleSpeechAuthorizationStatus::Denied,
             Some("en-US".to_string()),
             None,
+            None,
         );
         assert!(!denied.ready);
         assert_eq!(
@@ -665,6 +681,7 @@ mod availability_tests {
             AppleSpeechAuthorizationStatus::Authorized,
             Some("zz-ZZ".to_string()),
             Some(false),
+            Some(false),
         );
         assert!(!unavailable_language.ready);
         assert_eq!(
@@ -676,6 +693,7 @@ mod availability_tests {
             true,
             AppleSpeechAuthorizationStatus::Authorized,
             Some("en-US".to_string()),
+            Some(true),
             Some(true),
         );
         assert!(ready.ready);

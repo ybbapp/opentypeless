@@ -32,8 +32,25 @@ use tracing_subscriber::EnvFilter;
 
 use std::sync::{Arc, Mutex};
 
-/// Default cloud API base URL. Override with the `API_BASE_URL` environment variable.
+/// Default official API base URL. This fork does not use official paid Cloud.
 pub const DEFAULT_API_BASE_URL: &str = "https://www.opentypeless.com";
+
+/// Shown when a leftover `cloud` provider is still selected. This fork does not
+/// call official OpenTypeless paid APIs or impersonate a subscription.
+pub const OFFICIAL_MANAGED_CLOUD_REMOVED: &str =
+    "Official OpenTypeless Cloud is not available in this fork. Choose a local or BYOK provider.";
+
+pub fn official_managed_cloud_removed_error() -> String {
+    OFFICIAL_MANAGED_CLOUD_REMOVED.to_string()
+}
+
+pub fn default_stt_provider() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "apple-speech"
+    } else {
+        "glm-asr"
+    }
+}
 pub const CLIENT_VERSION_HEADER: &str = "X-OpenTypeless-Version";
 const HTTP_POOL_IDLE_TIMEOUT_SECS: u64 = 10 * 60;
 const HTTP_TCP_KEEPALIVE_SECS: u64 = 60;
@@ -881,7 +898,6 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(action) = parse_cli_action(&args) {
@@ -1196,6 +1212,8 @@ pub fn run() {
             commands::credentials::clear_credential,
             commands::credentials::migrate_legacy_credentials,
             commands::stt::get_stt_provider_diagnostics,
+            commands::stt::get_apple_speech_availability,
+            commands::stt::request_apple_speech_authorization,
             commands::stt::get_stt_recording_capability,
             commands::stt::cache_managed_stt_capability,
             commands::stt::clear_managed_stt_capability,

@@ -65,7 +65,7 @@ describe('LlmSetupStep', () => {
 
   it('moves a saved Cloud config to a valid BYOK provider instead of showing a dead selection', async () => {
     mockStore.config = {
-      llm_provider: 'cloud',
+      llm_provider: 'cloud' as never,
       llm_api_key: '',
       llm_base_url: 'https://www.opentypeless.com/api/proxy',
       llm_model: 'default',

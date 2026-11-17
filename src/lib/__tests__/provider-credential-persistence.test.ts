@@ -83,12 +83,13 @@ describe('provider key persistence across a settings save', () => {
     expect(saved.max_recording_seconds).toBe(600)
   })
 
-  it('keeps cloud login credentials out of provider key writes', async () => {
+  it('does not write provider keys for keyless local providers', async () => {
     await saveOnboardingConfig({
       ...staleConfig,
-      stt_provider: 'cloud',
-      llm_provider: 'cloud',
+      stt_provider: 'apple-speech',
+      llm_provider: 'ollama',
       stt_custom_api_key: '',
+      llm_api_key: '',
     })
     expect(vault.size).toBe(0)
   })

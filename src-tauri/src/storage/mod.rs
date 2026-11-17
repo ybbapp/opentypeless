@@ -384,7 +384,7 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            stt_provider: "glm-asr".to_string(),
+            stt_provider: crate::default_stt_provider().to_string(),
             stt_api_key: String::new(),
             stt_custom_api_key: String::new(),
             stt_language: "multi".to_string(),
@@ -399,7 +399,7 @@ impl Default for AppConfig {
             llm_api_key: String::new(),
             llm_model: "google/gemini-2.5-flash".to_string(),
             llm_base_url: "https://openrouter.ai/api/v1".to_string(),
-            polish_enabled: true,
+            polish_enabled: false,
             context_adaptation_enabled: true,
             voice_routing_flags: crate::voice_intent::VoiceRoutingFlags::default(),
             polish_style: "clean".to_string(),
@@ -556,7 +556,29 @@ impl AppConfig {
         self.hotkey_mode = self.hotkeys.dictation_mode.clone();
     }
 
+    fn migrate_removed_official_cloud(&mut self) {
+        if self.stt_provider == "cloud" {
+            self.stt_provider = crate::default_stt_provider().to_string();
+        }
+        if self.llm_provider == "cloud" {
+            self.llm_provider = "openrouter".to_string();
+            if self.llm_base_url.is_empty()
+                || self.llm_base_url.contains("opentypeless.com")
+                || self.llm_base_url.contains("/api/proxy")
+            {
+                self.llm_base_url = "https://openrouter.ai/api/v1".to_string();
+            }
+            if self.llm_model.is_empty() || self.llm_model == "default" {
+                self.llm_model = "google/gemini-2.5-flash".to_string();
+            }
+            self.polish_enabled = false;
+        }
+        // Official managed Cloud capability/quota is no longer used in this fork.
+        self.managed_stt_capability_state = None;
+    }
+
     pub(crate) fn normalize_values(&mut self) {
+        self.migrate_removed_official_cloud();
         if !matches!(
             self.stt_aliyun_qwen_region.as_str(),
             crate::stt::aliyun_qwen3_asr::ALIYUN_QWEN3_ASR_REGION_CHINA_MAINLAND
@@ -3716,5 +3738,24 @@ mod tests {
         assert_eq!(updated[0].pattern, "open type less");
         assert_eq!(updated[0].replacement, "OpenTypeless");
         assert!(!updated[0].enabled);
+    }
+
+    #[test]
+    fn app_config_migrates_official_cloud_providers_off() {
+        let mut config = AppConfig::default();
+        config.stt_provider = "cloud".to_string();
+        config.llm_provider = "cloud".to_string();
+        config.llm_base_url = "https://www.opentypeless.com/api/proxy".to_string();
+        config.llm_model = "default".to_string();
+        config.polish_enabled = true;
+        config.normalize_values();
+
+        assert_ne!(config.stt_provider, "cloud");
+        assert_eq!(config.stt_provider, crate::default_stt_provider());
+        assert_eq!(config.llm_provider, "openrouter");
+        assert!(!config.llm_base_url.contains("opentypeless.com"));
+        assert_ne!(config.llm_model, "default");
+        assert!(!config.polish_enabled);
+        assert!(config.managed_stt_capability_state.is_none());
     }
 }

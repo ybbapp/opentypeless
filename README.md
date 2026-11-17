@@ -41,13 +41,12 @@
 </p>
 
 <p align="center">
-  <strong>Dictate anywhere</strong> · <strong>Rewrite selected text</strong> · <strong>Ask one-shot voice questions</strong> · <strong>Bring your own keys or use managed cloud words</strong>
+  <strong>Dictate anywhere</strong> · <strong>Rewrite selected text</strong> · <strong>Ask one-shot voice questions</strong> · <strong>Bring your own keys or use local recognition</strong>
 </p>
 
 ## What's New in v1.1.55
 
-- **Stripe checkout for new purchases** with existing Creem subscriptions kept valid.
-- **More reliable cloud sign-in and billing** with secure session storage, clearer service-status messages, and stronger account-state recovery.
+- This fork removes official membership, checkout, and paid OpenTypeless Cloud. Use Apple Speech on macOS, a local or self-hosted endpoint, or your own provider keys.
 - **Faster and more reliable providers** through connection reuse and warm-up, complete Deepgram and AssemblyAI final transcripts, and preserved Custom Whisper URL queries.
 - **Modern model support** for GPT-5/o-series requests and the native Anthropic Claude Messages API, while Claude through OpenRouter remains supported.
 - **More STT choices and safer recording limits** including regional Qwen3 ASR Realtime, provider-aware duration controls, and preserved audio while providers connect.
@@ -167,17 +166,19 @@ Most desktop dictation tools stop at transcription. OpenTypeless adds the AI rew
 | AI rewriting      | App-aware writing, local per-app style mappings, polish styles, streaming polish, selected-text context, and custom instructions             |
 | Ask Anything      | One-shot voice question flow: record in the capsule, think, then show a small answer note with copy support                                 |
 | Voice actions     | Deterministic English, Simplified Chinese, and Traditional Chinese routing for editing, translation, Ask, and supported actions              |
-| STT providers     | Cloud STT, Apple Speech on macOS, Deepgram, AssemblyAI, GLM-ASR, OpenAI Whisper, Groq Whisper, SiliconFlow, Volcengine Doubao, custom endpoints |
-| LLM providers     | Cloud LLM or OpenAI-compatible APIs including OpenAI, DeepSeek, Claude via OpenRouter, Gemini, Groq, Qwen, Moonshot, Ollama, and more       |
+| STT providers     | Apple Speech on macOS, Deepgram, AssemblyAI, GLM-ASR, OpenAI Whisper, Groq Whisper, SiliconFlow, Volcengine Doubao, custom endpoints |
+| LLM providers     | OpenAI-compatible APIs including OpenAI, DeepSeek, Claude via OpenRouter, Gemini, Groq, Qwen, Moonshot, Ollama, and more       |
 | Output            | Keyboard simulation, clipboard paste/copy-only, Windows SendInput, clipboard restore, and output-failure diagnostics                       |
 | Language          | Auto-detect speech, dedicated translation shortcut, switchable target languages, and 20+ translation targets                                |
 | Dictionary        | Custom terms, import/export, and local correction rules for recurring transcription mistakes                                                 |
 | Scenes            | Built-in scenes, local custom scenes, active scene metadata, import/export for reusable writing styles                                      |
 | Privacy           | Local app detection and mappings, provider keys in the OS credential vault where available, plus BYOK and local/self-hosted paths            |
-| Account and quota | Optional Pro and Lifetime Starter plans with shared cloud words for voice and AI                                                            |
+| Local or BYOK     | Apple Speech on macOS, local/self-hosted endpoints, or your own provider keys. Official paid Cloud is removed in this fork                 |
 | Desktop polish    | Dark/light/system theme, onboarding, local history search, auto-start, auto-update, cross-platform Tauri app                                |
 
 UI localization currently ships with complete English and Chinese copy, plus additional locale files that may still fall back to English for newer advanced features.
+
+This fork removes official membership, checkout, and paid OpenTypeless Cloud. See [README_zh.md](README_zh.md) for macOS Apple Speech setup, permission notes, and the on-device recognition limitation.
 
 ## How The App Thinks
 
@@ -313,46 +314,23 @@ All settings are accessible from the in-app Settings panel:
 - **General** — manage multiple Dictation, Ask Anything, and Translation shortcuts, output mode, auto-start, and idle capsule visibility
 - **Dictionary** — add or import custom terms, export your dictionary, and create local correction rules for recurring transcription mistakes
 - **Scenes** — built-in and local prompt templates with import/export for reusable writing styles
-- **Account / Upgrade** — sign in, check cloud words, manage Pro or Lifetime Starter access
+- **Dictation only** — leave AI Polish off if you just want transcription; no LLM key is required
 
 API keys are stored locally in the OS credential vault where available, with a local fallback for unsupported environments. No BYOK keys are sent to OpenTypeless servers — STT/LLM requests go directly to the provider you configure.
 
-### Cloud Option
+### Local recognition and BYOK
 
-OpenTypeless also offers optional managed cloud access so you do not need your own provider keys. Pro and Lifetime Starter plans include shared cloud words for speech recognition and AI rewriting. BYOK remains fully supported.
+This fork does not include official paid Cloud, accounts, or checkout. You can:
 
-[Learn more about Pro](https://www.opentypeless.com)
+- Use **Apple Speech** on macOS (no API key). Fully on-device recognition is available only when the recognizer reports `supportsOnDeviceRecognition`; otherwise recognition may use Apple servers. See [README_zh.md](README_zh.md) for setup, separate microphone vs speech authorization, the 60s recording limit, and how to leave polish off.
+- Use a **local or self-hosted** Whisper-compatible STT endpoint and, optionally, a local LLM such as Ollama.
+- Use **your own provider keys** (BYOK). Requests go directly to the provider you configure.
 
-### BYOK vs Cloud
+AI polish is optional and off by default. Pure dictation works without an LLM key.
 
-|                  | BYOK Mode                                        | Cloud (Pro) Mode                            |
-| ---------------- | ------------------------------------------------ | ------------------------------------------- |
-| STT              | Your own API key or local endpoint               | Managed cloud words                         |
-| LLM              | Your own API key or local endpoint               | Managed cloud words                         |
-| Cloud dependency | None — all requests go directly to your provider | Requires connection to www.opentypeless.com |
-| Cost             | Pay your provider directly                       | Optional Pro or Lifetime Starter            |
-
-All core features — recording, transcription, AI polish, keyboard/clipboard output, dictionary, history — work entirely offline from OpenTypeless servers in BYOK mode.
-
-### Self-Hosting / No Cloud
-
-To run OpenTypeless without any cloud dependency:
-
-1. Choose any non-Cloud STT and LLM provider in Settings
-2. Enter your own API keys
-3. That's it — no account or internet connection to www.opentypeless.com is needed
-
-If you want to point the optional cloud features at your own backend, set these environment variables before building:
-
-| Variable            | Default                        | Description                     |
-| ------------------- | ------------------------------ | ------------------------------- |
-| `VITE_API_BASE_URL` | `https://www.opentypeless.com` | Frontend cloud API base URL     |
-| `API_BASE_URL`      | `https://www.opentypeless.com` | Rust backend cloud API base URL |
-
-```bash
-# Example: build with a custom backend
-VITE_API_BASE_URL=https://my-server.example.com API_BASE_URL=https://my-server.example.com npm run tauri build
-```
+1. Choose Apple Speech, a local endpoint, or a BYOK STT provider
+2. Skip or later disable AI Polish if you only need transcription
+3. No OpenTypeless account or connection to www.opentypeless.com is required
 
 ## Architecture
 
@@ -368,8 +346,8 @@ flowchart TB
   Pipeline --> LLMs["LLM providers"]
   Pipeline --> Storage["SQLite history + dictionary"]
   Pipeline --> Output["Keyboard / clipboard output"]
-  Account["Account + updater + cloud quota"] --> UI
-  Account --> Tauri
+  Update["App updates"] --> UI
+  Update --> Tauri
 ```
 
 ```
@@ -401,16 +379,16 @@ src-tauri/src/        # Rust backend
 ## FAQ
 
 **Is my audio sent to the cloud?**
-In BYOK mode, audio goes directly to your chosen STT provider or local endpoint. Nothing passes through OpenTypeless servers. In Cloud mode, audio is sent to the managed proxy for transcription and quota accounting.
+Audio goes to the STT provider you choose. A local Whisper-compatible endpoint keeps audio on your machine. Apple Speech can run on-device only when the language supports it; otherwise it may use Apple servers. This fork does not send audio to official OpenTypeless Cloud.
 
 **Can I use it offline?**
-With a local Whisper-compatible STT endpoint and a local OpenAI-compatible LLM such as Ollama, the app can run without OpenTypeless cloud services.
+Yes, with a local Whisper-compatible STT endpoint (and a local LLM such as Ollama if you want polish). On macOS, Apple Speech is fully offline only when on-device recognition is supported and required for that language.
 
 **Which languages are supported?**
 STT supports 99+ languages depending on the provider. AI polish and translation support 20+ target languages.
 
 **Is the app free?**
-Yes. The app is fully functional with your own API keys (BYOK). Cloud plans are optional.
+Yes. This fork is free and open source (MIT). Use Apple Speech, a local endpoint, or your own API keys. Official paid Cloud plans are not included.
 
 ## Community
 

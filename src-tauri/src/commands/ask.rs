@@ -3,7 +3,7 @@ use crate::audio::{AudioCaptureHandle, AudioConfig};
 use crate::credentials::{
     resolve_llm_config_secret, resolve_stt_config_secret, SystemCredentialVault,
 };
-use crate::error::{emit_cloud_session_invalid, managed_cloud_error, AppError};
+use crate::error::{emit_cloud_session_invalid, AppError};
 use crate::pipeline::PipelineState;
 use crate::storage;
 use crate::stt::{self, SttConfig, TranscriptEvent};
@@ -11,7 +11,7 @@ use crate::voice_intent::{
     SearchProvider, SpeechLanguageMode, VoiceIntent, VoiceIntentKind, VoiceIntentRouter, VoiceMode,
     VoiceRouteRequest, VoiceRoutingFlags,
 };
-use crate::{api_base_url, with_desktop_client_version, SessionTokenStore};
+use crate::SessionTokenStore;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -637,6 +637,7 @@ pub fn build_byok_ask_body_with_selected_text(
     build_byok_ask_body_for_context(question, model, Some(selected_text))
 }
 
+#[cfg(test)]
 fn build_cloud_ask_body(
     question: &str,
     selected_text: Option<&str>,
@@ -801,6 +802,10 @@ fn response_error(status: reqwest::StatusCode, text: String) -> String {
     format!("Ask request failed ({}): {}", status.as_u16(), sanitized)
 }
 
+#[cfg(test)]
+use crate::error::managed_cloud_error;
+
+#[cfg(test)]
 fn cloud_response_error(status: reqwest::StatusCode, text: String) -> AppError {
     if let Some(error) = managed_cloud_error(status.as_u16(), &text) {
         return error;
@@ -855,6 +860,7 @@ fn ask_app_error_message(error: AppError) -> String {
     }
 }
 
+#[cfg(test)]
 fn contains_quota_marker(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
     value.contains("quota")
@@ -864,6 +870,7 @@ fn contains_quota_marker(value: &str) -> bool {
         || value.contains("byok")
 }
 
+#[cfg(test)]
 fn extract_cloud_error_message(value: &serde_json::Value) -> Option<String> {
     for field in ["error", "message"] {
         match value.get(field) {
@@ -928,46 +935,16 @@ async fn ask_via_byok(
 }
 
 async fn ask_via_cloud(
-    client: &reqwest::Client,
-    token_store: &SessionTokenStore,
-    question: &str,
-    selected_text: Option<&str>,
-    operation_id: Option<&str>,
-    voice_intent: &VoiceIntent,
+    _client: &reqwest::Client,
+    _token_store: &SessionTokenStore,
+    _question: &str,
+    _selected_text: Option<&str>,
+    _operation_id: Option<&str>,
+    _voice_intent: &VoiceIntent,
 ) -> Result<String, AppError> {
-    let token = token_store
-        .0
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone();
-    if token.trim().is_empty() {
-        return Err(AppError::Auth(cloud_auth_required_message()));
-    }
-
-    let operation_id = operation_id
-        .map(str::to_string)
-        .unwrap_or_else(synthetic_operation_id);
-    let body = build_cloud_ask_body(question, selected_text, &operation_id, voice_intent)
-        .map_err(AppError::Config)?;
-
-    let resp =
-        with_desktop_client_version(client.post(format!("{}/api/proxy/ask", api_base_url())))
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .timeout(crate::cloud_request::ASK_TIMEOUT)
-            .send()
-            .await
-            .map_err(AppError::from)?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        return Err(cloud_response_error(status, text));
-    }
-
-    let body: serde_json::Value = resp.json().await.map_err(AppError::from)?;
-    validate_ask_answer(body["answer"].as_str().unwrap_or("")).map_err(AppError::Config)
+    Err(AppError::Config(
+        crate::official_managed_cloud_removed_error(),
+    ))
 }
 
 #[tauri::command]

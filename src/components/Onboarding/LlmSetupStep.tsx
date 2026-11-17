@@ -82,6 +82,7 @@ export function LlmSetupStep() {
         config.llm_model,
       )
       setLlmTestStatus(ok ? 'success' : 'error')
+      if (ok) updateConfig({ polish_enabled: true })
     } catch {
       setLlmTestStatus('error')
     }
@@ -89,6 +90,7 @@ export function LlmSetupStep() {
 
   return (
     <div className="space-y-5">
+      <p className="text-[12px] text-text-secondary">{t('onboarding.llm.optionalHint')}</p>
       <Field label={t('onboarding.llm.serviceLabel')}>
         <select
           value={selectedProvider}

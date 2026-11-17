@@ -76,7 +76,8 @@
     "disabled": "Deaktiviert",
     "outputMode": "Ausgabemodus",
     "wordsRemaining": "Verbleibende Wörter",
-    "wordsReset": "Wird am {{date}} zurückgesetzt"
+    "wordsReset": "Wird am {{date}} zurückgesetzt",
+    "dictationOnly": "Dictation only (no AI polish)"
   },
   "onboarding": {
     "speakToWrite": "Sprechen Sie, um zu schreiben — verwandeln Sie Ihre Stimme in Echtzeit in geglätteten Text",
@@ -110,7 +111,8 @@
       "testButton": "Verbindung testen",
       "connectionOk": "Verbindung erfolgreich",
       "connectionFail": "Verbindung fehlgeschlagen",
-      "customWhisperConfigured": "Custom Whisper"
+      "customWhisperConfigured": "Custom Whisper",
+      "appleHint": "Apple Speech needs no API key. Microphone and Speech Recognition are separate macOS permissions. Recognition is on-device only when this Mac and language support it; otherwise Apple may use its servers."
     },
     "llm": {
       "serviceLabel": "KI-Glättungsdienst",
@@ -123,7 +125,8 @@
       "modelsAvailable": "Modelle verfügbar",
       "baseUrlLabel": "Basis-URL",
       "connectionOk": "Verbindung erfolgreich",
-      "connectionFail": "Verbindung fehlgeschlagen"
+      "connectionFail": "Verbindung fehlgeschlagen",
+      "optionalHint": "You can skip this step and dictate raw transcripts. Enable AI polish later in Settings after adding your own API key or a local model such as Ollama."
     },
     "steps": {
       "welcome": "Willkommen",
@@ -141,7 +144,8 @@
       "howItWorks": "So funktioniert es",
       "howItWorksSub": "Machen Sie einen schnellen Aufnahmetest",
       "setupComplete": "Einrichtung abgeschlossen",
-      "getStarted": "Loslegen"
+      "getStarted": "Loslegen",
+      "aiPolishOptionalSub": "Optional. Skip this to use dictation only."
     },
     "account": {
       "signIn": "Anmelden",
@@ -472,7 +476,22 @@
     "mappingResetConfirm": "Alle nur auf diesem Gerät gespeicherten App-Zuordnungen löschen?",
     "mappingResetConfirmAction": "Zuordnungen zurücksetzen",
     "mappingNoMappings": "Keine eigenen App-Zuordnungen",
-    "dictationMode": "Diktiermodus"
+    "dictationMode": "Diktiermodus",
+    "appleSpeechAuthorize": "Authorize Speech Recognition",
+    "appleSpeechRecheck": "Recheck",
+    "appleSpeechOnDeviceYes": "This Mac reports on-device recognition for the current language. The app will require on-device recognition when available.",
+    "appleSpeechOnDeviceNo": "This Mac does not report on-device recognition for the current language. Apple Speech may send audio to Apple servers.",
+    "openMicrophoneSettings": "Open Microphone settings",
+    "openSpeechSettings": "Open Speech Recognition settings",
+    "appleSpeechIssues": {
+      "unsupported_platform": "Apple Speech is only available on macOS.",
+      "speech_permission_not_determined": "Speech Recognition permission has not been requested yet. Click Authorize to request it.",
+      "speech_permission_denied": "Speech Recognition permission is denied. Enable it in System Settings → Privacy & Security → Speech Recognition, then click Recheck.",
+      "speech_permission_restricted": "Speech Recognition is restricted on this Mac.",
+      "speech_permission_unknown": "Speech Recognition permission status is unknown. Try Authorize or Recheck.",
+      "speech_language_unavailable": "Apple Speech is not currently available for this language.",
+      "speech_recognizer_unavailable": "Apple Speech recognizer availability could not be checked."
+    }
   },
   "contextFamilies": {
     "email": "E-Mail",

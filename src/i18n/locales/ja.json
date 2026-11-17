@@ -76,7 +76,8 @@
     "disabled": "無効",
     "outputMode": "出力モード",
     "wordsRemaining": "残り words",
-    "wordsReset": "{{date}} にリセット"
+    "wordsReset": "{{date}} にリセット",
+    "dictationOnly": "Dictation only (no AI polish)"
   },
   "onboarding": {
     "speakToWrite": "話して書く — 音声をリアルタイムで整形されたテキストに変換します",
@@ -110,7 +111,8 @@
       "testButton": "接続テスト",
       "connectionOk": "接続に成功しました",
       "connectionFail": "接続に失敗しました",
-      "customWhisperConfigured": "Custom Whisper"
+      "customWhisperConfigured": "Custom Whisper",
+      "appleHint": "Apple Speech needs no API key. Microphone and Speech Recognition are separate macOS permissions. Recognition is on-device only when this Mac and language support it; otherwise Apple may use its servers."
     },
     "llm": {
       "serviceLabel": "AI整形サービス",
@@ -123,7 +125,8 @@
       "modelsAvailable": "件のモデルが利用可能",
       "baseUrlLabel": "ベースURL",
       "connectionOk": "接続に成功しました",
-      "connectionFail": "接続に失敗しました"
+      "connectionFail": "接続に失敗しました",
+      "optionalHint": "You can skip this step and dictate raw transcripts. Enable AI polish later in Settings after adding your own API key or a local model such as Ollama."
     },
     "steps": {
       "welcome": "ようこそ",
@@ -141,7 +144,8 @@
       "howItWorks": "使い方",
       "howItWorksSub": "簡単な録音テストを試しましょう",
       "setupComplete": "セットアップ完了",
-      "getStarted": "始める"
+      "getStarted": "始める",
+      "aiPolishOptionalSub": "Optional. Skip this to use dictation only."
     },
     "account": {
       "signIn": "サインイン",
@@ -472,7 +476,22 @@
     "mappingResetConfirm": "この端末だけに保存されたアプリの対応設定をすべて削除しますか？",
     "mappingResetConfirmAction": "対応設定をリセット",
     "mappingNoMappings": "カスタムのアプリ対応設定はありません",
-    "dictationMode": "ディクテーションモード"
+    "dictationMode": "ディクテーションモード",
+    "appleSpeechAuthorize": "Authorize Speech Recognition",
+    "appleSpeechRecheck": "Recheck",
+    "appleSpeechOnDeviceYes": "This Mac reports on-device recognition for the current language. The app will require on-device recognition when available.",
+    "appleSpeechOnDeviceNo": "This Mac does not report on-device recognition for the current language. Apple Speech may send audio to Apple servers.",
+    "openMicrophoneSettings": "Open Microphone settings",
+    "openSpeechSettings": "Open Speech Recognition settings",
+    "appleSpeechIssues": {
+      "unsupported_platform": "Apple Speech is only available on macOS.",
+      "speech_permission_not_determined": "Speech Recognition permission has not been requested yet. Click Authorize to request it.",
+      "speech_permission_denied": "Speech Recognition permission is denied. Enable it in System Settings → Privacy & Security → Speech Recognition, then click Recheck.",
+      "speech_permission_restricted": "Speech Recognition is restricted on this Mac.",
+      "speech_permission_unknown": "Speech Recognition permission status is unknown. Try Authorize or Recheck.",
+      "speech_language_unavailable": "Apple Speech is not currently available for this language.",
+      "speech_recognizer_unavailable": "Apple Speech recognizer availability could not be checked."
+    }
   },
   "contextFamilies": {
     "email": "メールアドレス",
